@@ -1,100 +1,476 @@
-// routes/dashboard.js
-// Rutas protegidas del dashboard (requieren autenticación)
-
-const express = require('express');
-const router = express.Router();
-const { requireAuth } = require('../middleware/auth');
-const { createSession, sendMessage, destroySession, getSession, getAllSessions } = require('../services/whatsapp');
-
-// Aplicar middleware de autenticación a todas las rutas
-router.use(requireAuth);
-
-// Dashboard principal
-router.get('/', (req, res) => {
-    const sessions = getAllSessions();
-
-    res.render('dashboard', { 
-        token: req.session.token,
-        sessions: sessions,
-        totalSessions: sessions.length,
-        query: req.query  // Para mostrar mensajes de éxito/error
-    });
-});
-
-// Crear nueva sesión
-router.post('/create-session', async (req, res) => {
-    const { sessionId } = req.body;
-    
-    if (!sessionId) {
-        return res.redirect('/dashboard?error=session_id_required');
-    }
-
-    try {
-        await createSession(sessionId);
-        res.redirect('/dashboard?success=session_created');
-
-    } catch (error) {
-        console.error(`Error creando sesión ${sessionId}:`, error);
-        res.redirect('/dashboard?error=creation_failed');
-    }
-});
-
-// Ver detalles de una sesión
-router.get('/session/:sessionId', (req, res) => {
-    const { sessionId } = req.params;
-    
-    const session = getSession(sessionId);
-    
-    if (!session) {
-        return res.redirect('/dashboard?error=session_not_found');
-    }
-    
-    res.render('session-detail', {
-        session: session,
-        messages: session.messages || [],
-        query: req.query  // Para mostrar mensajes de éxito/error
-    });
-});
-
-// Enviar mensaje desde dashboard
-router.post('/session/:sessionId/send', async (req, res) => {
-    const { sessionId } = req.params;
-    const { number, message } = req.body;
-    
-    try {
-        await sendMessage(sessionId, number, message);
-        res.redirect(`/dashboard/session/${sessionId}?success=message_sent`);
-
-    } catch (error) {
-        console.error(`Error enviando mensaje en sesión ${sessionId}:`, error);
-        
-        if (error.message.includes('no encontrada')) {
-            return res.redirect(`/dashboard?error=session_not_found`);
-        } else if (error.message.includes('no está conectada')) {
-            return res.redirect(`/dashboard/session/${sessionId}?error=not_connected`);
-        } else {
-            return res.redirect(`/dashboard/session/${sessionId}?error=send_failed`);
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard WhatsApp</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-    }
-});
 
-// Cerrar sesión
-router.delete('/session/:sessionId', async (req, res) => {
-    const { sessionId } = req.params;
-    
-    try {
-        await destroySession(sessionId);
-        res.json({ success: true, message: 'Sesión cerrada exitosamente' });
-
-    } catch (error) {
-        console.error(`Error cerrando sesión ${sessionId}:`, error);
-        
-        if (error.message.includes('no encontrada')) {
-            return res.status(404).json({ error: 'Sesión no encontrada' });
-        } else {
-            return res.status(500).json({ error: error.message });
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: #f8f9fa;
+            color: #333;
         }
-    }
-});
 
-module.exports = router;
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .header h2 {
+            color: #2c3e50;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 14px;
+            color: #666;
+        }
+
+        .session-card { 
+            background: white;
+            border: 1px solid #e1e8ed; 
+            padding: 20px; 
+            margin: 15px 0; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .session-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .status { 
+            padding: 6px 12px; 
+            border-radius: 20px; 
+            color: white; 
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status.connected { background: linear-gradient(135deg, #28a745, #20c997); }
+        .status.waiting_qr { background: linear-gradient(135deg, #ffc107, #fd7e14); color: #000; }
+        .status.initializing { background: linear-gradient(135deg, #17a2b8, #6f42c1); }
+        .status.authenticated { background: linear-gradient(135deg, #007bff, #0056b3); }
+        .status.auth_failed { background: linear-gradient(135deg, #dc3545, #c82333); }
+        .status.disconnected { background: linear-gradient(135deg, #6c757d, #5a6268); }
+
+        .form-group { 
+            margin: 15px 0; 
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e8ed;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #007bff;
+        }
+
+        .btn { 
+            padding: 10px 20px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            text-decoration: none; 
+            display: inline-block;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            text-align: center;
+        }
+        .btn:hover { transform: translateY(-1px); }
+        .btn-primary { background: linear-gradient(135deg, #007bff, #0056b3); color: white; }
+        .btn-success { background: linear-gradient(135deg, #28a745, #1e7e34); color: white; }
+        .btn-danger { background: linear-gradient(135deg, #dc3545, #c82333); color: white; }
+        .btn-warning { background: linear-gradient(135deg, #ffc107, #e0a800); color: #000; }
+        .btn-secondary { background: linear-gradient(135deg, #6c757d, #5a6268); color: white; }
+
+        .alert { 
+            padding: 15px 20px; 
+            margin: 20px 0; 
+            border-radius: 8px;
+            border-left: 4px solid;
+        }
+        .alert-success { 
+            background: #d4edda; 
+            color: #155724; 
+            border-left-color: #28a745;
+        }
+        .alert-danger { 
+            background: #f8d7da; 
+            color: #721c24; 
+            border-left-color: #dc3545;
+        }
+
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .card h3 {
+            color: #2c3e50;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .stat-card.green {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e6cf 100%);
+        }
+
+        .stat-card.blue {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .stat-card.orange {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .stat-number {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+
+        .session-grid {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 20px;
+        }
+
+        .session-info {
+            flex: 1;
+        }
+
+        .session-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: flex-end;
+        }
+
+        .session-meta {
+            color: #666;
+            font-size: 13px;
+            margin: 5px 0;
+        }
+
+        .session-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .info-box {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+
+        .info-box h3 {
+            color: white;
+            margin-bottom: 15px;
+        }
+
+        .info-box code {
+            background: rgba(255,255,255,0.2);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state svg {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header {
+                flex-direction: column;
+                gap: 15px;
+                text-align: center;
+            }
+
+            .session-grid {
+                flex-direction: column;
+            }
+
+            .session-actions {
+                flex-direction: row;
+                align-items: center;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>📱 Dashboard WhatsApp Sessions</h2>
+            <div class="user-info">
+                <span>👤 Bienvenido | Token: <code><%= token %></code></span>
+                <a href="/logout" class="btn btn-danger">🚪 Cerrar sesión</a>
+            </div>
+        </div>
+
+        <!-- Mostrar mensajes de estado -->
+        <% if (typeof query !== 'undefined') { %>
+            <% if (query.success) { %>
+                <div class="alert alert-success">
+                    <% if (query.success === 'session_created') { %>
+                        ✅ <strong>¡Éxito!</strong> Sesión creada exitosamente. El QR se está generando...
+                    <% } %>
+                </div>
+            <% } %>
+            <% if (query.error) { %>
+                <div class="alert alert-danger">
+                    <% if (query.error === 'session_id_required') { %>
+                        ❌ <strong>Error:</strong> Código de sesión requerido
+                    <% } else if (query.error === 'session_exists') { %>
+                        ❌ <strong>Error:</strong> La sesión ya existe
+                    <% } else if (query.error === 'creation_failed') { %>
+                        ❌ <strong>Error:</strong> No se pudo crear la sesión
+                    <% } else if (query.error === 'session_not_found') { %>
+                        ❌ <strong>Error:</strong> Sesión no encontrada
+                    <% } %>
+                </div>
+            <% } %>
+        <% } %>
+
+        <!-- Estadísticas -->
+        <div class="stats-grid">
+            <div class="stat-card blue">
+                <div class="stat-number"><%= totalSessions %></div>
+                <div class="stat-label">📊 Total Sesiones</div>
+            </div>
+            <div class="stat-card green">
+                <div class="stat-number"><%= sessions.filter(s => s.status === 'connected').length %></div>
+                <div class="stat-label">🔗 Conectadas</div>
+            </div>
+            <div class="stat-card orange">
+                <div class="stat-number"><%= sessions.filter(s => s.status === 'waiting_qr').length %></div>
+                <div class="stat-label">⏳ Esperando QR</div>
+            </div>
+        </div>
+
+        <!-- Formulario para crear nueva sesión -->
+        <div class="card">
+            <h3>🆕 Crear Nueva Sesión</h3>
+            <form method="POST" action="/dashboard/create-session">
+                <div class="form-group">
+                    <label for="sessionId">Código de Sesión:</label>
+                    <input 
+                        type="text" 
+                        id="sessionId"
+                        name="sessionId" 
+                        placeholder="Ejemplo: ses_1234567, cliente_empresa, bot_ventas..." 
+                        required 
+                        pattern="[a-zA-Z0-9_-]+"
+                        title="Solo letras, números, guiones y guiones bajos"
+                    >
+                </div>
+                <button type="submit" class="btn btn-success">✨ Crear Sesión</button>
+            </form>
+        </div>
+
+        <!-- Lista de sesiones -->
+        <div class="card">
+            <h3>📋 Sesiones Activas (<%= totalSessions %>)</h3>
+            
+            <% if (sessions.length === 0) { %>
+                <div class="empty-state">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z"/>
+                    </svg>
+                    <h3>No hay sesiones activas</h3>
+                    <p>Crea una nueva sesión arriba para comenzar a usar WhatsApp Web</p>
+                </div>
+            <% } else { %>
+                <% sessions.forEach(session => { %>
+                    <div class="session-card">
+                        <div class="session-grid">
+                            <div class="session-info">
+                                <div class="session-title">
+                                    🔢 <%= session.sessionId %>
+                                    <span class="status <%= session.status %>">
+                                        <%= session.status.replace('_', ' ').toUpperCase() %>
+                                    </span>
+                                </div>
+                                <div class="session-meta">
+                                    📅 <strong>Creada:</strong> <%= new Date(session.createdAt).toLocaleString('es-ES') %>
+                                </div>
+                                <div class="session-meta">
+                                    ⏰ <strong>Última actividad:</strong> <%= new Date(session.lastActivity).toLocaleString('es-ES') %>
+                                </div>
+                                <div class="session-meta">
+                                    💬 <strong>Mensajes:</strong> <%= session.messageCount %>
+                                </div>
+                            </div>
+                            <div class="session-actions">
+                                <a href="/dashboard/session/<%= session.sessionId %>" class="btn btn-primary">
+                                    👁️ Ver Detalles
+                                </a>
+                                <% if (session.status === 'waiting_qr') { %>
+                                    <a href="/api/qr/<%= session.sessionId %>" target="_blank" class="btn btn-warning">
+                                        📱 Ver QR Token
+                                    </a>
+                                <% } %>
+                                <% if (session.status === 'connected') { %>
+                                    <span class="btn btn-success" style="cursor: default;">
+                                        ✅ Conectado
+                                    </span>
+                                <% } %>
+                            </div>
+                        </div>
+                    </div>
+                <% }); %>
+            <% } %>
+        </div>
+
+        <!-- Información de rutas públicas -->
+        <div class="info-box">
+            <h3>🌍 API Pública (Sin autenticación)</h3>
+            <p>Estas rutas pueden ser usadas desde cualquier aplicación externa:</p>
+            <br>
+            <p><strong>📱 Obtener QR Token:</strong></p>
+            <code>GET /api/qr/tu_codigo_sesion</code>
+            <br><br>
+            <p><strong>📊 Verificar Estado:</strong></p>
+            <code>GET /api/status/tu_codigo_sesion</code>
+            <br><br>
+            <p><strong>⏳ Esperar QR (hasta 30 segundos):</strong></p>
+            <code>GET /api/qr/tu_codigo_sesion?wait=true</code>
+            <br><br>
+            <p><em>💡 Perfectas para integrar WhatsApp en tus aplicaciones externas.</em></p>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh cada 30 segundos para ver cambios de estado
+        let refreshTimer = setTimeout(() => {
+            window.location.reload();
+        }, 30000);
+
+        // Limpiar timer si el usuario interactúa
+        document.addEventListener('click', () => {
+            clearTimeout(refreshTimer);
+            refreshTimer = setTimeout(() => {
+                window.location.reload();
+            }, 30000);
+        });
+
+        // Validación del formulario
+        document.querySelector('form').addEventListener('submit', function(e) {
+            const sessionId = document.getElementById('sessionId').value;
+            if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+                e.preventDefault();
+                alert('❌ El código de sesión solo puede contener letras, números, guiones y guiones bajos.');
+                return false;
+            }
+            
+            // Mostrar loading
+            const btn = this.querySelector('button[type="submit"]');
+            btn.innerHTML = '⏳ Creando...';
+            btn.disabled = true;
+        });
+
+        // Mostrar tiempo transcurrido desde la última actividad
+        function updateTimeAgo() {
+            document.querySelectorAll('.session-meta').forEach(el => {
+                if (el.textContent.includes('Última actividad:')) {
+                    // Aquí podrías agregar lógica para mostrar "hace X minutos"
+                }
+            });
+        }
+
+        updateTimeAgo();
+        setInterval(updateTimeAgo, 60000); // Actualizar cada minuto
+    </script>
+</body>
+</html>
