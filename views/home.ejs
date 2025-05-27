@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bienvenido</title>
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      max-width: 800px; 
+      margin: 50px auto; 
+      padding: 20px; 
+      text-align: center; 
+    }
+    .btn { 
+      padding: 12px 25px; 
+      margin: 10px; 
+      border: none; 
+      border-radius: 5px; 
+      cursor: pointer; 
+      text-decoration: none; 
+      display: inline-block;
+      font-size: 16px;
+    }
+    .btn-primary { background: #007bff; color: white; }
+    .btn-secondary { background: #6c757d; color: white; }
+    .info-box {
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 5px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎉 Bienvenido al Sistema WhatsApp</h1>
+  
+  <div class="info-box">
+    <h3>✅ Autenticado Correctamente</h3>
+    <p>Tu token de sesión: <code><%= token %></code></p>
+  </div>
+
+  <div>
+    <a href="/dashboard" class="btn btn-primary">📱 Ir al Dashboard de WhatsApp</a>
+    <a href="/logout" class="btn btn-secondary">🚪 Cerrar Sesión</a>
+  </div>
+
+  <div class="info-box">
+    <h3>🌍 Rutas API Públicas</h3>
+    <p>Estas rutas no requieren autenticación:</p>
+    <ul style="text-align: left; display: inline-block;">
+      <li><strong>Obtener QR:</strong> <code>GET /api/qr/tu_codigo_sesion</code></li>
+      <li><strong>Estado:</strong> <code>GET /api/status/tu_codigo_sesion</code></li>
+    </ul>
+    <p><em>Úsalas desde cualquier aplicación externa para integrar WhatsApp.</em></p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard WhatsApp</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; }
+        .session-card { 
+            border: 1px solid #ddd; 
+            padding: 15px; 
+            margin: 10px 0; 
+            border-radius: 5px; 
+        }
+        .status { 
+            padding: 5px 10px; 
+            border-radius: 15px; 
+            color: white; 
+            font-size: 12px; 
+        }
+        .status.connected { background: #28a745; }
+        .status.waiting_qr { background: #ffc107; color: #000; }
+        .status.initializing { background: #17a2b8; }
+        .status.auth_failed { background: #dc3545; }
+        .form-group { margin: 10px 0; }
+        .btn { 
+            padding: 8px 15px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            text-decoration: none; 
+            display: inline-block;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .alert { 
+            padding: 10px; 
+            margin: 10px 0; 
+            border-radius: 4px; 
+        }
+        .alert-success { background: #d4edda; color: #155724; }
+        .alert-danger { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>📱 Dashboard WhatsApp Sessions</h2>
+        <div>
+            <span>Bienvenido | Token: <%= token %></span>
+            <a href="/logout" class="btn btn-danger">Cerrar sesión</a>
+        </div>
+    </div>
+
+    <!-- Mostrar mensajes de estado -->
+    <% if (typeof query !== 'undefined') { %>
+        <% if (query.success) { %>
+            <div class="alert alert-success">
+                <% if (query.success === 'session_created') { %>
+                    ✅ Sesión creada exitosamente
+                <% } %>
+            </div>
+        <% } %>
+        <% if (query.error) { %>
+            <div class="alert alert-danger">
+                <% if (query.error === 'session_id_required') { %>
+                    ❌ Código de sesión requerido
+                <% } else if (query.error === 'session_exists') { %>
+                    ❌ La sesión ya existe
+                <% } else if (query.error === 'creation_failed') { %>
+                    ❌ Error al crear la sesión
+                <% } else if (query.error === 'session_not_found') { %>
+                    ❌ Sesión no encontrada
+                <% } %>
+            </div>
+        <% } %>
+    <% } %>
+
+    <!-- Formulario para crear nueva sesión -->
+    <div style="background: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <h3>🆕 Crear Nueva Sesión</h3>
+        <form method="POST" action="/dashboard/create-session">
+            <div class="form-group">
+                <label>Código de Sesión:</label>
+                <input type="text" name="sessionId" placeholder="Ej: ses_1234567" required style="padding: 8px; margin-left: 10px;">
+            </div>
+            <button type="submit" class="btn btn-success">Crear Sesión</button>
+        </form>
+    </div>
+
+    <!-- Estadísticas -->
+    <div style="display: flex; gap: 20px; margin: 20px 0;">
+        <div style="background: #e3f2fd; padding: 15px; border-radius: 5px; flex: 1;">
+            <h4>📊 Total Sesiones</h4>
+            <p style="font-size: 24px; margin: 0;"><%= totalSessions %></p>
+        </div>
+        <div style="background: #e8f5e8; padding: 15px; border-radius: 5px; flex: 1;">
+            <h4>🔗 Sesiones Conectadas</h4>
+            <p style="font-size: 24px; margin: 0;">
+                <%= sessions.filter(s => s.status === 'connected').length %>
+            </p>
+        </div>
+    </div>
+
+    <!-- Lista de sesiones -->
+    <h3>📋 Sesiones Activas</h3>
+    
+    <% if (sessions.length === 0) { %>
+        <p style="text-align: center; color: #666; padding: 40px;">
+            No hay sesiones activas. Crea una nueva sesión arriba.
+        </p>
+    <% } else { %>
+        <% sessions.forEach(session => { %>
+            <div class="session-card">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <h4 style="margin: 0;">🔢 <%= session.sessionId %></h4>
+                        <p style="margin: 5px 0; color: #666;">
+                            Creada: <%= new Date(session.createdAt).toLocaleString() %>
+                        </p>
+                        <p style="margin: 5px 0; color: #666;">
+                            Última actividad: <%= new Date(session.lastActivity).toLocaleString() %>
+                        </p>
+                        <p style="margin: 5px 0;">
+                            💬 Mensajes: <%= session.messageCount %>
+                        </p>
+                    </div>
+                    <div style="text-align: right;">
+                        <div class="status <%= session.status %>">
+                            <%= session.status.toUpperCase() %>
+                        </div>
+                        <div style="margin-top: 10px;">
+                            <a href="/dashboard/session/<%= session.sessionId %>" class="btn btn-primary">
+                                Ver Detalles
+                            </a>
+                            <% if (session.status === 'waiting_qr') { %>
+                                <a href="/api/qr/<%= session.sessionId %>" target="_blank" class="btn btn-success">
+                                    Ver QR
+                                </a>
+                            <% } %>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        <% }); %>
+    <% } %>
+
+    <!-- Información de rutas públicas -->
+    <div style="background: #fff3cd; padding: 20px; border-radius: 5px; margin: 20px 0;">
+        <h3>🌍 Rutas Públicas (No requieren login)</h3>
+        <p><strong>Obtener QR Token:</strong></p>
+        <code>GET /api/qr/tu_codigo_sesion</code>
+        <p><strong>Verificar Estado:</strong></p>
+        <code>GET /api/status/tu_codigo_sesion</code>
+        <p><em>Estas rutas pueden ser usadas desde cualquier aplicación externa.</em></p>
+    </div>
+
+    <script>
+        // Auto-refresh cada 30 segundos
+        setTimeout(() => {
+            window.location.reload();
+        }, 30000);
+    </script>
+</body>
+</html>
