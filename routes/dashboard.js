@@ -31,10 +31,11 @@ router.post('/create-session', async (req, res) => {
 
     try {
         await createSession(sessionId);
+        console.log(`[DASHBOARD] ✅ Sesión ${sessionId} creada exitosamente`);
         res.redirect('/dashboard?success=session_created');
 
     } catch (error) {
-        console.error(`Error creando sesión ${sessionId}:`, error);
+        console.error(`[DASHBOARD] ❌ Error creando sesión ${sessionId}:`, error);
         res.redirect('/dashboard?error=creation_failed');
     }
 });
@@ -63,10 +64,11 @@ router.post('/session/:sessionId/send', async (req, res) => {
     
     try {
         await sendMessage(sessionId, number, message);
+        console.log(`[DASHBOARD] ✅ Mensaje enviado desde sesión ${sessionId}`);
         res.redirect(`/dashboard/session/${sessionId}?success=message_sent`);
 
     } catch (error) {
-        console.error(`Error enviando mensaje en sesión ${sessionId}:`, error);
+        console.error(`[DASHBOARD] ❌ Error enviando mensaje en sesión ${sessionId}:`, error);
         
         if (error.message.includes('no encontrada')) {
             return res.redirect(`/dashboard?error=session_not_found`);
@@ -78,21 +80,54 @@ router.post('/session/:sessionId/send', async (req, res) => {
     }
 });
 
-// Cerrar sesión
+// Eliminar sesión - Ruta DELETE para AJAX
 router.delete('/session/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
     
     try {
         await destroySession(sessionId);
-        res.json({ success: true, message: 'Sesión cerrada exitosamente' });
+        console.log(`[DASHBOARD] ✅ Sesión ${sessionId} eliminada exitosamente`);
+        res.json({ 
+            success: true, 
+            message: `Sesión ${sessionId} eliminada exitosamente`,
+            sessionId: sessionId
+        });
 
     } catch (error) {
-        console.error(`Error cerrando sesión ${sessionId}:`, error);
+        console.error(`[DASHBOARD] ❌ Error eliminando sesión ${sessionId}:`, error);
         
         if (error.message.includes('no encontrada')) {
-            return res.status(404).json({ error: 'Sesión no encontrada' });
+            return res.status(404).json({ 
+                success: false,
+                error: 'Sesión no encontrada',
+                sessionId: sessionId 
+            });
         } else {
-            return res.status(500).json({ error: error.message });
+            return res.status(500).json({ 
+                success: false,
+                error: error.message,
+                sessionId: sessionId 
+            });
+        }
+    }
+});
+
+// Eliminar sesión - Ruta GET para redirección (alternativa)
+router.get('/session/:sessionId/delete', async (req, res) => {
+    const { sessionId } = req.params;
+    
+    try {
+        await destroySession(sessionId);
+        console.log(`[DASHBOARD] ✅ Sesión ${sessionId} eliminada exitosamente`);
+        res.redirect('/dashboard?success=session_deleted');
+
+    } catch (error) {
+        console.error(`[DASHBOARD] ❌ Error eliminando sesión ${sessionId}:`, error);
+        
+        if (error.message.includes('no encontrada')) {
+            return res.redirect('/dashboard?error=session_not_found');
+        } else {
+            return res.redirect('/dashboard?error=delete_failed');
         }
     }
 });
