@@ -19,7 +19,7 @@ router.post('/login', async (req, res) => {
     console.log("Intentando login con:", email, password);
       
     try {
-        if (email === 'alvarogallo@hotmail.com' && password === 'colombia') {
+        if (email === 'alvarogallo@hotmail.com' && password === 'Colombia1') {
             console.log("Credenciales correctas");
             req.session.token = 'fake-token-123456';
             return res.redirect('/dashboard');
