@@ -114,8 +114,7 @@ function createWhatsAppSession(sessionId) {
                     groupName: chat.isGroup ? chat.name : null
                 });
                 session.lastActivity = new Date();
-            }
-            
+            }            
         } catch (error) {
             console.error(`[${sessionId}] Error procesando mensaje:`, error);
             console.log(`[${sessionId}] 📨 MENSAJE RECIBIDO (info básica):`);
