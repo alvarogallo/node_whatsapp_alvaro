@@ -11,7 +11,7 @@ app.use(express.json());
 
 // Configuración de sesiones
 app.use(session({
-  secret: 'clave_secreta',
+  secret: process.env.SESSION_SECRET || 'Colombia1',
   resave: false,
   saveUninitialized: true
 }));

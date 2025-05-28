@@ -69,18 +69,60 @@ function createWhatsAppSession(sessionId) {
     });
 
     client.on('message', async (message) => {
-        console.log(`[${sessionId}] Mensaje recibido:`, message.body);
-        
-        const session = activeSessions.get(sessionId);
-        if (session) {
-            if (!session.messages) session.messages = [];
-            session.messages.push({
-                from: message.from,
-                body: message.body,
-                timestamp: new Date(),
-                type: 'received'
-            });
-            session.lastActivity = new Date();
+        try {
+            // Obtener información del contacto
+            const contact = await message.getContact();
+            const chat = await message.getChat();
+            
+            // Determinar el nombre del remitente
+            let senderName = contact.pushname || contact.name || contact.number;
+            
+            // Si es un grupo, obtener info adicional
+            if (chat.isGroup) {
+                const groupName = chat.name;
+                console.log(`[${sessionId}] 📨 MENSAJE RECIBIDO EN GRUPO:`);
+                console.log(`   👥 Grupo: ${groupName}`);
+                console.log(`   👤 De: ${senderName} (${contact.number})`);
+                console.log(`   💬 Mensaje: "${message.body}"`);
+                console.log(`   🕐 Hora: ${new Date().toLocaleString()}`);
+            } else {
+                console.log(`[${sessionId}] 📨 MENSAJE RECIBIDO:`);
+                console.log(`   👤 De: ${senderName} (${contact.number})`);
+                console.log(`   💬 Mensaje: "${message.body}"`);
+                console.log(`   🕐 Hora: ${new Date().toLocaleString()}`);
+                
+                // Mostrar tipo de mensaje si no es texto
+                if (message.type !== 'chat') {
+                    console.log(`   📎 Tipo: ${message.type}`);
+                }
+            }
+            
+            // Agregar separador visual
+            console.log('   ' + '─'.repeat(50));
+            
+            const session = activeSessions.get(sessionId);
+            if (session) {
+                if (!session.messages) session.messages = [];
+                session.messages.push({
+                    from: message.from,
+                    fromName: senderName,
+                    body: message.body,
+                    timestamp: new Date(),
+                    type: 'received',
+                    messageType: message.type,
+                    isGroup: chat.isGroup,
+                    groupName: chat.isGroup ? chat.name : null
+                });
+                session.lastActivity = new Date();
+            }
+            
+        } catch (error) {
+            console.error(`[${sessionId}] Error procesando mensaje:`, error);
+            console.log(`[${sessionId}] 📨 MENSAJE RECIBIDO (info básica):`);
+            console.log(`   📞 De: ${message.from}`);
+            console.log(`   💬 Mensaje: "${message.body}"`);
+            console.log(`   🕐 Hora: ${new Date().toLocaleString()}`);
+            console.log('   ' + '─'.repeat(50));
         }
     });
 
@@ -139,6 +181,13 @@ async function sendMessage(sessionId, number, message) {
 
     const chatId = number.includes('@c.us') ? number : `${number}@c.us`;
     await session.client.sendMessage(chatId, message);
+    
+    // Log del mensaje enviado
+    console.log(`[${sessionId}] 📤 MENSAJE ENVIADO:`);
+    console.log(`   📞 Para: ${number}`);
+    console.log(`   💬 Mensaje: "${message}"`);
+    console.log(`   🕐 Hora: ${new Date().toLocaleString()}`);
+    console.log('   ' + '─'.repeat(50));
     
     // Guardar mensaje enviado
     if (!session.messages) session.messages = [];
