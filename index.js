@@ -51,11 +51,18 @@ app.use('/api', apiRoutes);         // /api/*
 // ===== SERVIDOR =====
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
+    const memoryUsage = process.memoryUsage();
+    const formatBytes = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+    
     console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
     console.log(`🌍 Accesible desde cualquier IP en puerto ${PORT}`);
     console.log('\n=== CONFIGURACIÓN ===');
     console.log(`📧 Admin Email: ${process.env.ADMIN_EMAIL || 'alvarogallo@hotmail.com'}`);
     console.log(`🔐 Variables de entorno cargadas: ${process.env.NODE_ENV || 'development'}`);
+    console.log('\n=== MEMORIA INICIAL ===');
+    console.log(`💾 RAM Total: ${formatBytes(memoryUsage.rss)} MB`);
+    console.log(`🧠 Heap Usado: ${formatBytes(memoryUsage.heapUsed)} MB`);
+    console.log(`📊 Heap Total: ${formatBytes(memoryUsage.heapTotal)} MB`);
     console.log('\n=== RUTAS DISPONIBLES ===');
     console.log('🔐 AUTENTICACIÓN:');
     console.log('   GET  /                    - Página principal');
@@ -73,6 +80,13 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('   GET  /api/qr/:sessionId     - Obtener token QR');
     console.log('   GET  /api/status/:sessionId - Estado de sesión');
     console.log('   DELETE /api/session/:sessionId - Borrar sesión');
+    console.log('   GET  /api/system-info        - Info del sistema');
     console.log('');
     console.log('📱 Ejemplo: http://localhost:3000/api/qr/ses_1234567');
+    
+    // Mostrar información de memoria cada 5 minutos
+    setInterval(() => {
+        const mem = process.memoryUsage();
+        console.log(`\n💾 [${new Date().toLocaleString()}] Memoria: RAM=${formatBytes(mem.rss)}MB, Heap=${formatBytes(mem.heapUsed)}MB`);
+    }, 5 * 60 * 1000);
 });
