@@ -16,10 +16,14 @@ router.get('/', (req, res) => {
 // Procesar login
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
-    console.log("Intentando login con:", email, password);
+    console.log("Intentando login con:", email, "****");
       
     try {
-        if (email === 'alvarogallo@hotmail.com' && password === 'Colombia1') {
+        // Leer credenciales desde variables de entorno
+        const validEmail = process.env.ADMIN_EMAIL || 'alvarogallo@hotmail.com';
+        const validPassword = process.env.ADMIN_PASSWORD || 'colombia';
+        
+        if (email === validEmail && password === validPassword) {
             console.log("Credenciales correctas");
             req.session.token = 'fake-token-123456';
             return res.redirect('/dashboard');
