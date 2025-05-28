@@ -12,6 +12,20 @@ app.set('view engine', 'ejs');
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+// ===== HABILITAR CORS =====
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    
+    // Responder a preflight requests
+    if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+    } else {
+        next();
+    }
+});
+
 // Configuración de sesiones con variable de entorno
 app.use(session({
   secret: process.env.SESSION_SECRET || 'clave_secreta_fallback',
@@ -36,8 +50,9 @@ app.use('/api', apiRoutes);         // /api/*
 
 // ===== SERVIDOR =====
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+    console.log(`🌍 Accesible desde cualquier IP en puerto ${PORT}`);
     console.log('\n=== CONFIGURACIÓN ===');
     console.log(`📧 Admin Email: ${process.env.ADMIN_EMAIL || 'alvarogallo@hotmail.com'}`);
     console.log(`🔐 Variables de entorno cargadas: ${process.env.NODE_ENV || 'development'}`);
@@ -57,6 +72,7 @@ app.listen(PORT, () => {
     console.log('🌍 PÚBLICAS (API sin login):');
     console.log('   GET  /api/qr/:sessionId     - Obtener token QR');
     console.log('   GET  /api/status/:sessionId - Estado de sesión');
+    console.log('   DELETE /api/session/:sessionId - Borrar sesión');
     console.log('');
     console.log('📱 Ejemplo: http://localhost:3000/api/qr/ses_1234567');
 });
