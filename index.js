@@ -4,6 +4,7 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -11,6 +12,9 @@ const app = express();
 app.set('view engine', 'ejs');
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+
+// Servir archivos estáticos desde la carpeta 'public'
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // ===== HABILITAR CORS =====
 app.use((req, res, next) => {
@@ -33,9 +37,13 @@ app.use(session({
   saveUninitialized: true
 }));
 
-// Crear directorio de sesiones si no existe
+// Crear directorios necesarios si no existen
 if (!fs.existsSync('./sessions')) {
     fs.mkdirSync('./sessions', { recursive: true });
+}
+
+if (!fs.existsSync('./public')) {
+    fs.mkdirSync('./public', { recursive: true });
 }
 
 // ===== IMPORTAR RUTAS =====
@@ -77,12 +85,15 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('   DELETE /dashboard/session/:id');
     console.log('');
     console.log('🌍 PÚBLICAS (API sin login):');
+    console.log('   GET  /api/cliente           - Cliente WhatsApp HTML');
     console.log('   GET  /api/qr/:sessionId     - Obtener token QR');
     console.log('   GET  /api/status/:sessionId - Estado de sesión');
     console.log('   DELETE /api/session/:sessionId - Borrar sesión');
     console.log('   GET  /api/system-info        - Info del sistema');
     console.log('');
-    console.log('📱 Ejemplo: http://localhost:3000/api/qr/ses_1234567');
+    console.log('📱 Ejemplos:');
+    console.log('   http://localhost:3000/api/cliente');
+    console.log('   http://localhost:3000/api/qr/ses_1234567');
     
     // Mostrar información de memoria cada 5 minutos
     setInterval(() => {

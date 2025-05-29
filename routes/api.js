@@ -5,6 +5,8 @@ const express = require('express');
 const router = express.Router();
 const { createSession, getSession, destroySession } = require('../services/whatsapp');
 
+const path = require('path');
+
 // Información del sistema - PÚBLICA
 router.get('/system-info', (req, res) => {
     try {
@@ -61,7 +63,10 @@ router.get('/system-info', (req, res) => {
         });
     }
 });
-
+// Cliente WhatsApp - Servir página HTML
+router.get('/cliente', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'public', 'cliente_whatsapp.html'));
+});
 // Obtener token QR - PÚBLICA (no requiere autenticación)
 router.get('/qr/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
