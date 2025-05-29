@@ -3,8 +3,64 @@
 
 const express = require('express');
 const router = express.Router();
-//const { createSession, getSession } = require('../services/whatsapp');
 const { createSession, getSession, destroySession } = require('../services/whatsapp');
+
+// Información del sistema - PÚBLICA
+router.get('/system-info', (req, res) => {
+    try {
+        const memoryUsage = process.memoryUsage();
+        const uptime = process.uptime();
+        
+        // Convertir bytes a MB
+        const formatBytes = (bytes) => (bytes / 1024 / 1024).toFixed(2);
+        
+        // Formatear tiempo de actividad
+        const formatUptime = (seconds) => {
+            const days = Math.floor(seconds / 86400);
+            const hours = Math.floor((seconds % 86400) / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const secs = Math.floor(seconds % 60);
+            
+            if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+            if (hours > 0) return `${hours}h ${minutes}m`;
+            if (minutes > 0) return `${minutes}m ${secs}s`;
+            return `${secs}s`;
+        };
+        
+        const systemInfo = {
+            memory: {
+                rss: formatBytes(memoryUsage.rss), // RAM total usada
+                heapUsed: formatBytes(memoryUsage.heapUsed), // Heap usado por V8
+                heapTotal: formatBytes(memoryUsage.heapTotal), // Heap total asignado
+                external: formatBytes(memoryUsage.external), // Memoria externa (C++)
+                arrayBuffers: formatBytes(memoryUsage.arrayBuffers || 0)
+            },
+            process: {
+                uptime: formatUptime(uptime),
+                uptimeSeconds: Math.floor(uptime),
+                pid: process.pid,
+                version: process.version,
+                platform: process.platform,
+                arch: process.arch
+            },
+            timestamp: new Date().toISOString()
+        };
+        
+        console.log(`[API] 📊 System info requested - RAM: ${systemInfo.memory.rss}MB, Uptime: ${systemInfo.process.uptime}`);
+        
+        res.json({
+            success: true,
+            data: systemInfo
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error obteniendo system-info:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error obteniendo información del sistema: ' + error.message
+        });
+    }
+});
 
 // Obtener token QR - PÚBLICA (no requiere autenticación)
 router.get('/qr/:sessionId', async (req, res) => {
@@ -126,6 +182,39 @@ router.get('/status/:sessionId', (req, res) => {
         messageCount: session.messages ? session.messages.length : 0,
         hasQR: !!session.qrCode
     });
+});
+
+// Borrar sesión - PÚBLICA
+router.delete('/session/:sessionId', async (req, res) => {
+    const { sessionId } = req.params;
+    
+    try {
+        await destroySession(sessionId);
+        console.log(`[API] ✅ Sesión ${sessionId} eliminada exitosamente`);
+        
+        res.json({
+            success: true,
+            message: `Sesión ${sessionId} eliminada exitosamente`,
+            sessionId: sessionId
+        });
+
+    } catch (error) {
+        console.error(`[API] ❌ Error eliminando sesión ${sessionId}:`, error);
+        
+        if (error.message.includes('no encontrada')) {
+            return res.status(404).json({
+                success: false,
+                error: 'Sesión no encontrada',
+                sessionId: sessionId
+            });
+        } else {
+            return res.status(500).json({
+                success: false,
+                error: 'Error eliminando sesión: ' + error.message,
+                sessionId: sessionId
+            });
+        }
+    }
 });
 
 module.exports = router;
