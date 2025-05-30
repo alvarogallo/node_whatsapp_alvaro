@@ -4,6 +4,7 @@
 const express = require('express');
 const router = express.Router();
 const { createSession, getSession, destroySession } = require('../services/whatsapp');
+const { getSessionsStats, recoverAllSessions, recoverSession, cleanInvalidSessions } = require('../services/sessionRecovery');
 
 const path = require('path');
 
@@ -574,6 +575,109 @@ router.delete('/session/:sessionId', async (req, res) => {
                 sessionId: sessionId
             });
         }
+    }
+});
+
+// Estadísticas de sesiones - PÚBLICA
+router.get('/sessions-stats', (req, res) => {
+    try {
+        const stats = getSessionsStats();
+        
+        res.json({
+            success: true,
+            message: 'Estadísticas de sesiones',
+            stats: stats,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error obteniendo estadísticas de sesiones:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error obteniendo estadísticas: ' + error.message
+        });
+    }
+});
+
+// Recuperar todas las sesiones manualmente - PÚBLICA
+router.post('/recover-sessions', async (req, res) => {
+    try {
+        console.log('[API] 🔄 Solicitud manual de recuperación de sesiones...');
+        const results = await recoverAllSessions();
+        
+        res.json({
+            success: true,
+            message: 'Proceso de recuperación completado',
+            results: results,
+            summary: `${results.recovered}/${results.total} sesiones recuperadas`,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error en recuperación manual:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error en recuperación: ' + error.message
+        });
+    }
+});
+
+// Recuperar una sesión específica - PÚBLICA
+router.post('/recover-session/:sessionId', async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        
+        console.log(`[API] 🔄 Solicitud de recuperación de sesión específica: ${sessionId}`);
+        const result = await recoverSession(sessionId);
+        
+        if (result.success) {
+            res.json({
+                success: true,
+                message: `Sesión ${sessionId} recuperada exitosamente`,
+                session: {
+                    sessionId: result.session.sessionId,
+                    status: result.session.status,
+                    createdAt: result.session.createdAt
+                },
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(400).json({
+                success: false,
+                error: `No se pudo recuperar la sesión ${sessionId}`,
+                reason: result.reason,
+                details: result.error
+            });
+        }
+        
+    } catch (error) {
+        console.error(`[API] ❌ Error recuperando sesión ${req.params.sessionId}:`, error);
+        res.status(500).json({
+            success: false,
+            error: 'Error en recuperación: ' + error.message
+        });
+    }
+});
+
+// Limpiar sesiones inválidas - PÚBLICA
+router.post('/clean-invalid-sessions', (req, res) => {
+    try {
+        console.log('[API] 🧹 Solicitud de limpieza de sesiones inválidas...');
+        const cleaned = cleanInvalidSessions();
+        
+        res.json({
+            success: true,
+            message: 'Limpieza de sesiones completada',
+            cleaned: cleaned,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error limpiando sesiones:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error en limpieza: ' + error.message
+        });
     }
 });
 
