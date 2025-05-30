@@ -659,6 +659,583 @@ router.post('/recover-session/:sessionId', async (req, res) => {
     }
 });
 
+// Obtener grupos de una sesión - PÚBLICA (con validación de clave)
+router.post('/session/:sessionId/groups', checkLotteryService, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const { clave_hoy } = req.body;
+        
+        // Validar sessionId del parámetro
+        if (!sessionId || typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'sessionId en la URL debe ser válido'
+            });
+        }
+        
+        // Validar clave requerida
+        if (!clave_hoy) {
+            return res.status(400).json({
+                success: false,
+                error: 'clave_hoy es requerido',
+                example: {
+                    clave_hoy: "0705934"
+                },
+                hint: "Obtenga la clave del día desde GET /api/lottery-info"
+            });
+        }
+        
+        // Validar clave del día
+        console.log(`[API] 🔐 Validando clave_hoy para obtener grupos de ${sessionId}: ${clave_hoy}`);
+        const keyValidation = await lotteryService.validateTodayKey(clave_hoy);
+        
+        if (!keyValidation.isValid) {
+            return res.status(403).json({
+                success: false,
+                error: 'clave_hoy incorrecta',
+                provided: keyValidation.providedKey,
+                expected: keyValidation.expectedKey || 'Error obteniendo clave',
+                sessionId: sessionId,
+                validation: keyValidation
+            });
+        }
+        
+        // Verificar si la sesión existe
+        const session = getSession(sessionId);
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                error: 'Sesión no encontrada',
+                sessionId: sessionId,
+                message: 'Use POST /api/session para crear una sesión primero'
+            });
+        }
+        
+        // Verificar si la sesión está conectada
+        if (session.status !== 'connected') {
+            return res.status(400).json({
+                success: false,
+                error: 'Sesión no está conectada',
+                sessionId: sessionId,
+                currentStatus: session.status,
+                message: 'La sesión debe estar conectada para obtener grupos'
+            });
+        }
+        
+        console.log(`[API] 📱 Obteniendo grupos de la sesión ${sessionId}...`);
+        
+        // Obtener todos los chats de la sesión
+        const chats = await session.client.getChats();
+        
+        // Filtrar solo los grupos
+        const groups = chats.filter(chat => chat.isGroup);
+        
+        // Formatear información de los grupos
+        const groupsInfo = await Promise.all(groups.map(async (group) => {
+            try {
+                // Obtener participantes del grupo
+                const participants = await group.participants;
+                
+                return {
+                    id: group.id._serialized,
+                    name: group.name,
+                    description: group.description || '',
+                    participantCount: participants ? participants.length : 0,
+                    isAdmin: group.participants ? group.participants.some(p => 
+                        p.id._serialized === session.client.info.wid._serialized && p.isAdmin
+                    ) : false,
+                    createdAt: group.createdAt ? new Date(group.createdAt * 1000).toISOString() : null,
+                    lastMessage: group.lastMessage ? {
+                        timestamp: new Date(group.lastMessage.timestamp * 1000).toISOString(),
+                        body: group.lastMessage.body || '',
+                        from: group.lastMessage.from
+                    } : null,
+                    unreadCount: group.unreadCount || 0,
+                    archived: group.archived || false,
+                    pinned: group.pinned || false
+                };
+            } catch (error) {
+                console.error(`[API] ⚠️  Error obteniendo detalles del grupo ${group.name}:`, error.message);
+                return {
+                    id: group.id._serialized,
+                    name: group.name,
+                    description: group.description || '',
+                    participantCount: 0,
+                    isAdmin: false,
+                    error: 'Error obteniendo detalles'
+                };
+            }
+        }));
+        
+        console.log(`[API] ✅ Obtenidos ${groupsInfo.length} grupos de la sesión ${sessionId}`);
+        
+        res.json({
+            success: true,
+            sessionId: sessionId,
+            message: `Grupos obtenidos exitosamente de la sesión ${sessionId}`,
+            totalGroups: groupsInfo.length,
+            groups: groupsInfo,
+            sessionInfo: {
+                status: session.status,
+                lastActivity: session.lastActivity
+            },
+            lottery: {
+                clave_hoy_used: keyValidation.providedKey,
+                lot_unatecla: keyValidation.expectedKey
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error(`[API] ❌ Error obteniendo grupos de sesión ${req.params.sessionId}:`, error);
+        res.status(500).json({
+            success: false,
+            error: 'Error obteniendo grupos: ' + error.message,
+            sessionId: req.params.sessionId
+        });
+    }
+});
+
+// Ruta alternativa para obtener grupos (con sessionId en el body)
+router.post('/groups', checkLotteryService, async (req, res) => {
+    try {
+        const { sessionId, clave_hoy } = req.body;
+        
+        // Validar campos requeridos
+        if (!sessionId || !clave_hoy) {
+            return res.status(400).json({
+                success: false,
+                error: 'sessionId y clave_hoy son requeridos',
+                example: {
+                    sessionId: "mi_sesion_123",
+                    clave_hoy: "0705934"
+                },
+                hint: "Obtenga la clave del día desde GET /api/lottery-info"
+            });
+        }
+        
+        // Validar formato de sessionId
+        if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'sessionId debe ser una cadena válida no vacía'
+            });
+        }
+        
+        // Validar clave del día
+        console.log(`[API] 🔐 Validando clave_hoy para obtener grupos de ${sessionId}: ${clave_hoy}`);
+        const keyValidation = await lotteryService.validateTodayKey(clave_hoy);
+        
+        if (!keyValidation.isValid) {
+            return res.status(403).json({
+                success: false,
+                error: 'clave_hoy incorrecta',
+                provided: keyValidation.providedKey,
+                expected: keyValidation.expectedKey || 'Error obteniendo clave',
+                validation: keyValidation
+            });
+        }
+        
+        // Verificar si la sesión existe
+        const session = getSession(sessionId);
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                error: 'Sesión no encontrada',
+                sessionId: sessionId,
+                message: 'Use POST /api/session para crear una sesión primero'
+            });
+        }
+        
+        // Verificar si la sesión está conectada
+        if (session.status !== 'connected') {
+            return res.status(400).json({
+                success: false,
+                error: 'Sesión no está conectada',
+                sessionId: sessionId,
+                currentStatus: session.status,
+                message: 'La sesión debe estar conectada para obtener grupos'
+            });
+        }
+        
+        console.log(`[API] 📱 Obteniendo grupos de la sesión ${sessionId}...`);
+        
+        // Obtener todos los chats de la sesión
+        const chats = await session.client.getChats();
+        
+        // Filtrar solo los grupos
+        const groups = chats.filter(chat => chat.isGroup);
+        
+        // Formatear información de los grupos
+        const groupsInfo = await Promise.all(groups.map(async (group) => {
+            try {
+                // Obtener participantes del grupo
+                const participants = await group.participants;
+                
+                return {
+                    id: group.id._serialized,
+                    name: group.name,
+                    description: group.description || '',
+                    participantCount: participants ? participants.length : 0,
+                    isAdmin: group.participants ? group.participants.some(p => 
+                        p.id._serialized === session.client.info.wid._serialized && p.isAdmin
+                    ) : false,
+                    createdAt: group.createdAt ? new Date(group.createdAt * 1000).toISOString() : null,
+                    lastMessage: group.lastMessage ? {
+                        timestamp: new Date(group.lastMessage.timestamp * 1000).toISOString(),
+                        body: group.lastMessage.body || '',
+                        from: group.lastMessage.from
+                    } : null,
+                    unreadCount: group.unreadCount || 0,
+                    archived: group.archived || false,
+                    pinned: group.pinned || false
+                };
+            } catch (error) {
+                console.error(`[API] ⚠️  Error obteniendo detalles del grupo ${group.name}:`, error.message);
+                return {
+                    id: group.id._serialized,
+                    name: group.name,
+                    description: group.description || '',
+                    participantCount: 0,
+                    isAdmin: false,
+                    error: 'Error obteniendo detalles'
+                };
+            }
+        }));
+        
+        console.log(`[API] ✅ Obtenidos ${groupsInfo.length} grupos de la sesión ${sessionId}`);
+        
+        res.json({
+            success: true,
+            sessionId: sessionId,
+            message: `Grupos obtenidos exitosamente de la sesión ${sessionId}`,
+            totalGroups: groupsInfo.length,
+            groups: groupsInfo,
+            sessionInfo: {
+                status: session.status,
+                lastActivity: session.lastActivity
+            },
+            lottery: {
+                clave_hoy_used: keyValidation.providedKey,
+                lot_unatecla: keyValidation.expectedKey
+            },
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error obteniendo grupos:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error obteniendo grupos: ' + error.message
+        });
+    }
+});
+
+// Enviar mensaje a un grupo específico - PÚBLICA (con validación de clave)
+router.post('/session/:sessionId/send-group-message', checkLotteryService, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const { clave_hoy, groupId, message } = req.body;
+        
+        // Validar sessionId del parámetro
+        if (!sessionId || typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'sessionId en la URL debe ser válido'
+            });
+        }
+        
+        // Validar campos requeridos
+        if (!clave_hoy || !groupId || !message) {
+            return res.status(400).json({
+                success: false,
+                error: 'clave_hoy, groupId y message son requeridos',
+                example: {
+                    clave_hoy: "0705934",
+                    groupId: "120363025463049711@g.us",
+                    message: "¡Hola grupo! 👋"
+                },
+                hint: "Use POST /api/session/:sessionId/groups para obtener los IDs de grupos"
+            });
+        }
+        
+        // Validar formato del mensaje
+        if (typeof message !== 'string' || message.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'El mensaje debe ser una cadena válida no vacía'
+            });
+        }
+        
+        // Validar clave del día
+        console.log(`[API] 🔐 Validando clave_hoy para enviar mensaje al grupo desde ${sessionId}: ${clave_hoy}`);
+        const keyValidation = await lotteryService.validateTodayKey(clave_hoy);
+        
+        if (!keyValidation.isValid) {
+            return res.status(403).json({
+                success: false,
+                error: 'clave_hoy incorrecta',
+                provided: keyValidation.providedKey,
+                expected: keyValidation.expectedKey || 'Error obteniendo clave',
+                sessionId: sessionId,
+                validation: keyValidation
+            });
+        }
+        
+        // Verificar si la sesión existe
+        const session = getSession(sessionId);
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                error: 'Sesión no encontrada',
+                sessionId: sessionId,
+                message: 'Use POST /api/session para crear una sesión primero'
+            });
+        }
+        
+        // Verificar si la sesión está conectada
+        if (session.status !== 'connected') {
+            return res.status(400).json({
+                success: false,
+                error: 'Sesión no está conectada',
+                sessionId: sessionId,
+                currentStatus: session.status,
+                message: 'La sesión debe estar conectada para enviar mensajes'
+            });
+        }
+        
+        console.log(`[API] 📱 Enviando mensaje al grupo ${groupId} desde sesión ${sessionId}...`);
+        
+        // Verificar que el grupo existe y es accesible
+        try {
+            const chat = await session.client.getChatById(groupId);
+            
+            if (!chat.isGroup) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'El ID proporcionado no corresponde a un grupo',
+                    groupId: groupId,
+                    chatType: 'individual'
+                });
+            }
+            
+            // Enviar el mensaje al grupo
+            await session.client.sendMessage(groupId, message);
+            
+            console.log(`[API] ✅ Mensaje enviado exitosamente al grupo ${chat.name} (${groupId})`);
+            
+            // Registrar el mensaje enviado en la sesión
+            if (!session.messages) session.messages = [];
+            session.messages.push({
+                to: groupId,
+                toName: chat.name,
+                body: message,
+                timestamp: new Date(),
+                type: 'sent',
+                messageType: 'group',
+                groupInfo: {
+                    name: chat.name,
+                    participantCount: chat.participants ? chat.participants.length : 0
+                }
+            });
+            session.lastActivity = new Date();
+            
+            res.json({
+                success: true,
+                sessionId: sessionId,
+                message: 'Mensaje enviado exitosamente al grupo',
+                sentMessage: {
+                    groupId: groupId,
+                    groupName: chat.name,
+                    message: message,
+                    timestamp: new Date().toISOString(),
+                    participantCount: chat.participants ? chat.participants.length : 0
+                },
+                sessionInfo: {
+                    status: session.status,
+                    lastActivity: session.lastActivity,
+                    totalMessages: session.messages.length
+                },
+                lottery: {
+                    clave_hoy_used: keyValidation.providedKey,
+                    lot_unatecla: keyValidation.expectedKey
+                }
+            });
+            
+        } catch (error) {
+            if (error.message.includes('Chat not found')) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Grupo no encontrado',
+                    groupId: groupId,
+                    message: 'Verifique que el ID del grupo sea correcto y que tenga acceso a él'
+                });
+            } else {
+                throw error; // Re-lanzar otros errores
+            }
+        }
+        
+    } catch (error) {
+        console.error(`[API] ❌ Error enviando mensaje al grupo desde sesión ${req.params.sessionId}:`, error);
+        res.status(500).json({
+            success: false,
+            error: 'Error enviando mensaje al grupo: ' + error.message,
+            sessionId: req.params.sessionId
+        });
+    }
+});
+
+// Ruta alternativa para enviar mensaje a grupo (con sessionId en el body)
+router.post('/send-group-message', checkLotteryService, async (req, res) => {
+    try {
+        const { sessionId, clave_hoy, groupId, message } = req.body;
+        
+        // Validar campos requeridos
+        if (!sessionId || !clave_hoy || !groupId || !message) {
+            return res.status(400).json({
+                success: false,
+                error: 'sessionId, clave_hoy, groupId y message son requeridos',
+                example: {
+                    sessionId: "mi_sesion_123",
+                    clave_hoy: "0705934",
+                    groupId: "120363025463049711@g.us",
+                    message: "¡Hola grupo! 👋"
+                },
+                hint: "Use POST /api/groups para obtener los IDs de grupos disponibles"
+            });
+        }
+        
+        // Validar formatos
+        if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'sessionId debe ser una cadena válida no vacía'
+            });
+        }
+        
+        if (typeof message !== 'string' || message.trim().length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'El mensaje debe ser una cadena válida no vacía'
+            });
+        }
+        
+        // Validar clave del día
+        console.log(`[API] 🔐 Validando clave_hoy para enviar mensaje al grupo desde ${sessionId}: ${clave_hoy}`);
+        const keyValidation = await lotteryService.validateTodayKey(clave_hoy);
+        
+        if (!keyValidation.isValid) {
+            return res.status(403).json({
+                success: false,
+                error: 'clave_hoy incorrecta',
+                provided: keyValidation.providedKey,
+                expected: keyValidation.expectedKey || 'Error obteniendo clave',
+                validation: keyValidation
+            });
+        }
+        
+        // Verificar si la sesión existe
+        const session = getSession(sessionId);
+        if (!session) {
+            return res.status(404).json({
+                success: false,
+                error: 'Sesión no encontrada',
+                sessionId: sessionId,
+                message: 'Use POST /api/session para crear una sesión primero'
+            });
+        }
+        
+        // Verificar si la sesión está conectada
+        if (session.status !== 'connected') {
+            return res.status(400).json({
+                success: false,
+                error: 'Sesión no está conectada',
+                sessionId: sessionId,
+                currentStatus: session.status,
+                message: 'La sesión debe estar conectada para enviar mensajes'
+            });
+        }
+        
+        console.log(`[API] 📱 Enviando mensaje al grupo ${groupId} desde sesión ${sessionId}...`);
+        
+        // Verificar que el grupo existe y es accesible
+        try {
+            const chat = await session.client.getChatById(groupId);
+            
+            if (!chat.isGroup) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'El ID proporcionado no corresponde a un grupo',
+                    groupId: groupId,
+                    chatType: 'individual'
+                });
+            }
+            
+            // Enviar el mensaje al grupo
+            await session.client.sendMessage(groupId, message);
+            
+            console.log(`[API] ✅ Mensaje enviado exitosamente al grupo ${chat.name} (${groupId})`);
+            
+            // Registrar el mensaje enviado en la sesión
+            if (!session.messages) session.messages = [];
+            session.messages.push({
+                to: groupId,
+                toName: chat.name,
+                body: message,
+                timestamp: new Date(),
+                type: 'sent',
+                messageType: 'group',
+                groupInfo: {
+                    name: chat.name,
+                    participantCount: chat.participants ? chat.participants.length : 0
+                }
+            });
+            session.lastActivity = new Date();
+            
+            res.json({
+                success: true,
+                sessionId: sessionId,
+                message: 'Mensaje enviado exitosamente al grupo',
+                sentMessage: {
+                    groupId: groupId,
+                    groupName: chat.name,
+                    message: message,
+                    timestamp: new Date().toISOString(),
+                    participantCount: chat.participants ? chat.participants.length : 0
+                },
+                sessionInfo: {
+                    status: session.status,
+                    lastActivity: session.lastActivity,
+                    totalMessages: session.messages.length
+                },
+                lottery: {
+                    clave_hoy_used: keyValidation.providedKey,
+                    lot_unatecla: keyValidation.expectedKey
+                }
+            });
+            
+        } catch (error) {
+            if (error.message.includes('Chat not found')) {
+                return res.status(404).json({
+                    success: false,
+                    error: 'Grupo no encontrado',
+                    groupId: groupId,
+                    message: 'Verifique que el ID del grupo sea correcto y que tenga acceso a él'
+                });
+            } else {
+                throw error; // Re-lanzar otros errores
+            }
+        }
+        
+    } catch (error) {
+        console.error('[API] ❌ Error enviando mensaje al grupo:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error enviando mensaje al grupo: ' + error.message
+        });
+    }
+});
+
 // Limpiar sesiones inválidas - PÚBLICA
 router.post('/clean-invalid-sessions', (req, res) => {
     try {
