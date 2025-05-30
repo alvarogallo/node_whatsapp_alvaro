@@ -95,9 +95,86 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log('   http://localhost:3000/api/cliente');
     console.log('   http://localhost:3000/api/qr/ses_1234567');
     
+    // En la sección de rutas públicas, agregar:
+    console.log('   GET  /api/lottery-info       - Información clave del día');
+    console.log('   POST /api/lottery-refresh    - Refrescar caché lotería');
+    console.log('   POST /api/session            - Crear sesión (requiere clave del día)');
+
     // Mostrar información de memoria cada 5 minutos
     setInterval(() => {
         const mem = process.memoryUsage();
         console.log(`\n💾 [${new Date().toLocaleString()}] Memoria: RAM=${formatBytes(mem.rss)}MB, Heap=${formatBytes(mem.heapUsed)}MB`);
     }, 5 * 60 * 1000);
 });
+
+// Agregar al final de index.js - Sistema de cierre correcto
+
+// ===== MANEJO DE CIERRE CORRECTO =====
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+    if (isShuttingDown) {
+        console.log(`\n⚠️  Forzando cierre... (ya en proceso de cierre)`);
+        process.exit(1);
+    }
+    
+    isShuttingDown = true;
+    console.log(`\n📴 Recibida señal ${signal}. Iniciando cierre correcto...`);
+    
+    try {
+        // Cerrar todas las sesiones de WhatsApp activas
+        const { getAllSessions, destroySession } = require('./services/whatsapp');
+        const sessions = getAllSessions();
+        
+        if (sessions.length > 0) {
+            console.log(`🔄 Cerrando ${sessions.length} sesión(es) activa(s)...`);
+            
+            const closePromises = sessions.map(async (session) => {
+                try {
+                    console.log(`  📴 Cerrando sesión: ${session.sessionId}`);
+                    await destroySession(session.sessionId);
+                    console.log(`  ✅ Sesión ${session.sessionId} cerrada correctamente`);
+                } catch (error) {
+                    console.error(`  ❌ Error cerrando sesión ${session.sessionId}:`, error.message);
+                }
+            });
+            
+            // Esperar máximo 10 segundos para cerrar todas las sesiones
+            await Promise.race([
+                Promise.all(closePromises),
+                new Promise(resolve => setTimeout(resolve, 10000))
+            ]);
+        }
+        
+        console.log('✅ Todas las sesiones cerradas correctamente');
+        
+    } catch (error) {
+        console.error('❌ Error durante el cierre:', error.message);
+    }
+    
+    console.log('👋 Servidor cerrado correctamente. ¡Hasta luego!');
+    process.exit(0);
+}
+
+// Manejar Ctrl+C (SIGINT)
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Manejar terminación del proceso (SIGTERM)
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+
+// Manejar errores no capturados
+process.on('uncaughtException', (error) => {
+    console.error('💥 Error no capturado:', error);
+    gracefulShutdown('UNCAUGHT_EXCEPTION');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 Promesa rechazada no manejada:', reason);
+    gracefulShutdown('UNHANDLED_REJECTION');
+});
+
+// Mostrar mensaje de ayuda
+console.log('\n💡 AYUDA:');
+console.log('   Presiona Ctrl+C para cerrar el servidor correctamente');
+console.log('   El sistema cerrará todas las sesiones de WhatsApp automáticamente');
+console.log('');

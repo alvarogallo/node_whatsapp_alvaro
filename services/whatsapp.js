@@ -201,18 +201,18 @@ async function sendMessage(sessionId, number, message) {
     return true;
 }
 
-async function destroySession(sessionId) {
-    const session = activeSessions.get(sessionId);
+// async function destroySession(sessionId) {
+//     const session = activeSessions.get(sessionId);
     
-    if (!session) {
-        throw new Error('Sesión no encontrada');
-    }
+//     if (!session) {
+//         throw new Error('Sesión no encontrada');
+//     }
 
-    await session.client.destroy();
-    activeSessions.delete(sessionId);
+//     await session.client.destroy();
+//     activeSessions.delete(sessionId);
     
-    return true;
-}
+//     return true;
+// }
 
 function getSession(sessionId) {
     return activeSessions.get(sessionId);
@@ -234,10 +234,59 @@ function getAllSessions() {
     return sessions;
 }
 
+// Agregar al final de services/whatsapp.js - Mejorar cierre de sesiones
+
+async function destroySession(sessionId) {
+    const session = activeSessions.get(sessionId);
+    
+    if (!session) {
+        throw new Error('Sesión no encontrada');
+    }
+
+    try {
+        console.log(`[${sessionId}] 🔄 Iniciando cierre de sesión...`);
+        
+        // Cerrar cliente con timeout
+        const closePromise = session.client.destroy();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout cerrando cliente')), 5000)
+        );
+        
+        await Promise.race([closePromise, timeoutPromise]);
+        console.log(`[${sessionId}] ✅ Cliente cerrado correctamente`);
+        
+    } catch (error) {
+        console.warn(`[${sessionId}] ⚠️  Error cerrando cliente (continuando...):`, error.message);
+    } finally {
+        // Siempre remover de la lista de sesiones activas
+        activeSessions.delete(sessionId);
+        console.log(`[${sessionId}] 🗑️  Sesión removida de memoria`);
+    }
+    
+    return true;
+}
+
+// Función para cerrar todas las sesiones
+async function destroyAllSessions() {
+    const sessionIds = Array.from(activeSessions.keys());
+    console.log(`[WHATSAPP] 🔄 Cerrando ${sessionIds.length} sesión(es) activa(s)...`);
+    
+    const closePromises = sessionIds.map(sessionId => 
+        destroySession(sessionId).catch(error => 
+            console.error(`[${sessionId}] ❌ Error cerrando:`, error.message)
+        )
+    );
+    
+    await Promise.allSettled(closePromises);
+    console.log('[WHATSAPP] ✅ Todas las sesiones procesadas');
+}
+
+// Exportar la nueva función
 module.exports = {
     createSession,
     sendMessage,
     destroySession,
+    destroyAllSessions, // Nueva función
     getSession,
     getAllSessions,
     activeSessions
