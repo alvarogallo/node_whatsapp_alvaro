@@ -1,5 +1,5 @@
-// services/sessionRecovery.js
-// Sistema para recuperar sesiones existentes desde la carpeta sessions
+// services/sessionRecovery.js - VERSIÓN CORREGIDA
+// Sistema para recuperar sesiones existentes desde la carpeta sessions SIN afectar las activas
 
 const fs = require('fs');
 const path = require('path');
@@ -63,15 +63,31 @@ function hasValidSessionData(sessionId) {
     }
 }
 
-// Función para recuperar una sesión específica
+// 🔧 FUNCIÓN CORREGIDA: Verificar si una sesión necesita recuperación
+function needsRecovery(sessionId) {
+    // ✅ CLAVE: Si ya está activa en memoria, NO necesita recuperación
+    if (activeSessions.has(sessionId)) {
+        console.log(`[RECOVERY] ✅ Sesión ${sessionId} ya está activa, saltando recuperación`);
+        return false;
+    }
+    
+    // Solo recuperar si tiene datos válidos pero no está en memoria
+    return hasValidSessionData(sessionId);
+}
+
+// 🔧 FUNCIÓN CORREGIDA: Recuperar una sesión específica solo si es necesario
 async function recoverSession(sessionId) {
     try {
-        console.log(`[RECOVERY] 🔄 Recuperando sesión: ${sessionId}`);
+        console.log(`[RECOVERY] 🔄 Evaluando recuperación de: ${sessionId}`);
         
-        // Verificar si la sesión ya está activa
+        // ✅ VERIFICACIÓN CLAVE: No tocar sesiones activas
         if (activeSessions.has(sessionId)) {
-            console.log(`[RECOVERY] ⚠️  Sesión ${sessionId} ya está activa`);
-            return { success: false, reason: 'already_active' };
+            console.log(`[RECOVERY] ⚠️  Sesión ${sessionId} ya está activa - NO RECUPERANDO`);
+            return { 
+                success: true, 
+                reason: 'already_active',
+                session: activeSessions.get(sessionId)
+            };
         }
         
         // Verificar si tiene datos válidos
@@ -80,14 +96,16 @@ async function recoverSession(sessionId) {
             return { success: false, reason: 'invalid_data' };
         }
         
-        // Crear la sesión (esto la restaurará automáticamente)
+        // Solo aquí crear la sesión (esto la restaurará automáticamente)
+        console.log(`[RECOVERY] 🚀 Recuperando sesión ${sessionId}...`);
         const session = await createSession(sessionId);
         
         console.log(`[RECOVERY] ✅ Sesión ${sessionId} recuperada exitosamente`);
         return { 
             success: true, 
             session: session,
-            sessionId: sessionId
+            sessionId: sessionId,
+            reason: 'recovered'
         };
         
     } catch (error) {
@@ -100,31 +118,60 @@ async function recoverSession(sessionId) {
     }
 }
 
-// Función para recuperar todas las sesiones encontradas
+// 🔧 FUNCIÓN CORREGIDA: Recuperar solo las sesiones que realmente lo necesitan
 async function recoverAllSessions() {
-    console.log('[RECOVERY] 🚀 Iniciando recuperación de sesiones...');
+    console.log('[RECOVERY] 🚀 Iniciando recuperación inteligente de sesiones...');
     
     const sessionFolders = scanSessionsFolder();
     
     if (sessionFolders.length === 0) {
-        console.log('[RECOVERY] 📝 No hay sesiones para recuperar');
+        console.log('[RECOVERY] 📝 No hay sesiones para evaluar');
         return {
             total: 0,
             recovered: 0,
             failed: 0,
+            skipped: 0,
             sessions: []
         };
     }
+    
+    // ✅ NUEVO: Mostrar estado actual antes de recuperar
+    const activeSessions = require('./whatsapp').activeSessions;
+    console.log(`[RECOVERY] 📊 Estado actual: ${activeSessions.size} sesión(es) activa(s)`);
     
     const results = {
         total: sessionFolders.length,
         recovered: 0,
         failed: 0,
+        skipped: 0,
         sessions: []
     };
     
-    // Recuperar sesiones una por una (para evitar sobrecargar)
-    for (const sessionId of sessionFolders) {
+    // ✅ CLAVE: Filtrar solo las sesiones que necesitan recuperación
+    const sessionsToRecover = sessionFolders.filter(sessionId => needsRecovery(sessionId));
+    
+    console.log(`[RECOVERY] 🎯 De ${sessionFolders.length} carpetas, ${sessionsToRecover.length} necesitan recuperación`);
+    
+    if (sessionsToRecover.length === 0) {
+        console.log('[RECOVERY] ✅ Todas las sesiones válidas ya están activas');
+        
+        // Agregar sesiones activas al resultado
+        sessionFolders.forEach(sessionId => {
+            if (activeSessions.has(sessionId)) {
+                results.skipped++;
+                results.sessions.push({
+                    sessionId: sessionId,
+                    status: 'already_active',
+                    reason: 'Session was already running'
+                });
+            }
+        });
+        
+        return results;
+    }
+    
+    // Recuperar solo las sesiones que lo necesitan
+    for (const sessionId of sessionsToRecover) {
         try {
             // Pequeña pausa entre recuperaciones
             await new Promise(resolve => setTimeout(resolve, 1000));
@@ -132,16 +179,25 @@ async function recoverAllSessions() {
             const result = await recoverSession(sessionId);
             
             if (result.success) {
-                results.recovered++;
-                results.sessions.push({
-                    sessionId: sessionId,
-                    status: 'recovered',
-                    session: {
-                        sessionId: result.session.sessionId,
-                        status: result.session.status,
-                        createdAt: result.session.createdAt
-                    }
-                });
+                if (result.reason === 'already_active') {
+                    results.skipped++;
+                    results.sessions.push({
+                        sessionId: sessionId,
+                        status: 'skipped',
+                        reason: result.reason
+                    });
+                } else {
+                    results.recovered++;
+                    results.sessions.push({
+                        sessionId: sessionId,
+                        status: 'recovered',
+                        session: {
+                            sessionId: result.session.sessionId,
+                            status: result.session.status,
+                            createdAt: result.session.createdAt
+                        }
+                    });
+                }
             } else {
                 results.failed++;
                 results.sessions.push({
@@ -164,7 +220,10 @@ async function recoverAllSessions() {
         }
     }
     
-    console.log(`[RECOVERY] 📊 Recuperación completada: ${results.recovered}/${results.total} exitosas`);
+    console.log(`[RECOVERY] 📊 Recuperación completada:`);
+    console.log(`   ✅ Recuperadas: ${results.recovered}`);
+    console.log(`   ⏭️  Saltadas (ya activas): ${results.skipped}`);
+    console.log(`   ❌ Fallidas: ${results.failed}`);
     
     return results;
 }
@@ -177,6 +236,12 @@ function cleanInvalidSessions() {
     let cleaned = 0;
     
     sessionFolders.forEach(sessionId => {
+        // ✅ NUEVO: No tocar carpetas de sesiones activas
+        if (activeSessions.has(sessionId)) {
+            console.log(`[RECOVERY] ⚠️  Saltando ${sessionId} (sesión activa)`);
+            return;
+        }
+        
         if (!hasValidSessionData(sessionId)) {
             try {
                 const sessionPath = path.join('./sessions', sessionId);
@@ -193,29 +258,36 @@ function cleanInvalidSessions() {
     return cleaned;
 }
 
-// Función para obtener estadísticas de la carpeta sessions
+// 🔧 FUNCIÓN MEJORADA: Obtener estadísticas más detalladas
 function getSessionsStats() {
     const sessionFolders = scanSessionsFolder();
+    const activeSessionsMap = require('./whatsapp').activeSessions;
+    
     const stats = {
         total: sessionFolders.length,
         valid: 0,
         invalid: 0,
-        active: activeSessions.size,
+        active: activeSessionsMap.size,
+        needRecovery: 0,
         details: []
     };
     
     sessionFolders.forEach(sessionId => {
         const isValid = hasValidSessionData(sessionId);
-        const isActive = activeSessions.has(sessionId);
+        const isActive = activeSessionsMap.has(sessionId);
+        const needsRec = needsRecovery(sessionId);
         
         if (isValid) stats.valid++;
         else stats.invalid++;
+        
+        if (needsRec) stats.needRecovery++;
         
         stats.details.push({
             sessionId: sessionId,
             valid: isValid,
             active: isActive,
-            status: isActive ? 'active' : (isValid ? 'recoverable' : 'invalid')
+            needsRecovery: needsRec,
+            status: isActive ? 'active' : (needsRec ? 'needs_recovery' : (isValid ? 'valid_but_inactive' : 'invalid'))
         });
     });
     
@@ -225,6 +297,7 @@ function getSessionsStats() {
 module.exports = {
     scanSessionsFolder,
     hasValidSessionData,
+    needsRecovery,      // ✅ Nueva función exportada
     recoverSession,
     recoverAllSessions,
     cleanInvalidSessions,

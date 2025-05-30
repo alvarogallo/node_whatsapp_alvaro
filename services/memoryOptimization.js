@@ -64,7 +64,8 @@ async function closeInactiveSessions() {
     const timeoutMs = MEMORY_LIMITS.SESSION_TIMEOUT_HOURS * 60 * 60 * 1000;
     let closedSessions = 0;
     
-    const { destroySession } = require('./whatsapp');
+    // 🔧 CAMBIO: Importar función de cierre suave
+    const { closeSoftSession } = require('./whatsapp');
     
     for (const [sessionId, session] of activeSessions) {
         if (!session.lastActivity) continue;
@@ -74,8 +75,12 @@ async function closeInactiveSessions() {
         if (inactiveTime > timeoutMs) {
             try {
                 console.log(`[MEMORY] ⏰ Cerrando sesión inactiva: ${sessionId} (${Math.round(inactiveTime / (1000 * 60 * 60))}h sin actividad)`);
-                await destroySession(sessionId);
+                
+                // 🔧 CAMBIO CLAVE: Usar cierre suave que NO elimina carpeta física
+                await closeSoftSession(sessionId);
                 closedSessions++;
+                
+                console.log(`[MEMORY] ✅ Sesión ${sessionId} cerrada suavemente (datos preservados)`);
             } catch (error) {
                 console.error(`[MEMORY] ❌ Error cerrando sesión inactiva ${sessionId}:`, error.message);
             }
@@ -83,7 +88,7 @@ async function closeInactiveSessions() {
     }
     
     if (closedSessions > 0) {
-        console.log(`[MEMORY] ✅ Cerradas ${closedSessions} sesión(es) inactiva(s)`);
+        console.log(`[MEMORY] ✅ Cerradas ${closedSessions} sesión(es) inactiva(s) - Datos preservados para recuperación`);
     }
     
     return closedSessions;
@@ -110,6 +115,8 @@ async function checkMemoryLimits() {
         
         // Acciones de emergencia
         const cleaned = cleanAllSessionsMessages();
+        
+        // 🔧 CAMBIO: Usar cierre suave en lugar de destroySession
         const closed = await closeInactiveSessions();
         
         // Forzar garbage collection si está disponible
@@ -118,7 +125,7 @@ async function checkMemoryLimits() {
             console.log(`[MEMORY] 🗑️  Garbage collection forzado`);
         }
         
-        actionsPerformed.push(`critical_cleanup`, `cleaned_${cleaned}_messages`, `closed_${closed}_sessions`);
+        actionsPerformed.push(`critical_cleanup`, `cleaned_${cleaned}_messages`, `soft_closed_${closed}_sessions`);
         
     } else if (memory.rss >= MEMORY_LIMITS.MEMORY_WARNING_MB) {
         console.warn(`[MEMORY] ⚠️  Memoria alta: ${memory.rss}MB >= ${MEMORY_LIMITS.MEMORY_WARNING_MB}MB`);

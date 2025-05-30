@@ -337,14 +337,108 @@ function cleanOrphanedSessionFolders() {
         return 0;
     }
 }
+async function closeSoftSession(sessionId) {
+    const session = activeSessions.get(sessionId);
+    
+    if (!session) {
+        console.log(`[${sessionId}] ⚠️  Sesión no encontrada para cierre suave`);
+        return false;
+    }
 
-// Exportar las nuevas funciones
+    try {
+        console.log(`[${sessionId}] 🔄 Iniciando cierre suave (preservando datos)...`);
+        
+        // Cerrar cliente con timeout
+        const closePromise = session.client.destroy();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout cerrando cliente')), 5000)
+        );
+        
+        await Promise.race([closePromise, timeoutPromise]);
+        console.log(`[${sessionId}] ✅ Cliente cerrado correctamente`);
+        
+    } catch (error) {
+        console.warn(`[${sessionId}] ⚠️  Error cerrando cliente (continuando...):`, error.message);
+    } finally {
+        // Remover SOLO de la lista de sesiones activas
+        activeSessions.delete(sessionId);
+        console.log(`[${sessionId}] 🗑️  Sesión removida de memoria`);
+    }
+    
+    // 🔧 CLAVE: NO eliminar carpeta del disco - datos preservados para recuperación
+    console.log(`[${sessionId}] 💾 Datos de sesión preservados en ./sessions/${sessionId}`);
+    
+    return true;
+}
+
+// 🔧 FUNCIÓN MEJORADA: destroySession con opción de preservar datos
+async function destroySessionWithOptions(sessionId, preserveData = true) {
+    const session = activeSessions.get(sessionId);
+    
+    if (!session) {
+        throw new Error('Sesión no encontrada');
+    }
+
+    try {
+        console.log(`[${sessionId}] 🔄 Iniciando cierre completo de sesión...`);
+        
+        // Cerrar cliente con timeout
+        const closePromise = session.client.destroy();
+        const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Timeout cerrando cliente')), 5000)
+        );
+        
+        await Promise.race([closePromise, timeoutPromise]);
+        console.log(`[${sessionId}] ✅ Cliente cerrado correctamente`);
+        
+    } catch (error) {
+        console.warn(`[${sessionId}] ⚠️  Error cerrando cliente (continuando...):`, error.message);
+    } finally {
+        // Siempre remover de la lista de sesiones activas
+        activeSessions.delete(sessionId);
+        console.log(`[${sessionId}] 🗑️  Sesión removida de memoria`);
+    }
+    
+    // 🔧 NUEVA LÓGICA: Solo eliminar carpeta si se especifica explícitamente
+    if (!preserveData) {
+        try {
+            const sessionPath = path.join('./sessions', sessionId);
+            
+            if (fs.existsSync(sessionPath)) {
+                console.log(`[${sessionId}] 📁 Eliminando carpeta de sesión: ${sessionPath}`);
+                
+                fs.rmSync(sessionPath, { 
+                    recursive: true, 
+                    force: true 
+                });
+                
+                console.log(`[${sessionId}] ✅ Carpeta de sesión eliminada completamente`);
+            }
+            
+        } catch (error) {
+            console.error(`[${sessionId}] ❌ Error eliminando carpeta de sesión:`, error.message);
+        }
+    } else {
+        console.log(`[${sessionId}] 💾 Datos de sesión preservados para recuperación futura`);
+    }
+    
+    return true;
+}
+const originalDestroySession = destroySession;
+
+async function destroySession(sessionId, preserveData = true) {
+    return await destroySessionWithOptions(sessionId, preserveData);
+}
+
+// EXPORTAR las nuevas funciones
 module.exports = {
     createSession,
     sendMessage,
     destroySession,
+    destroySessionWithOptions, // 🔧 Nueva función
+    closeSoftSession,          // 🔧 Nueva función
     destroyAllSessions, 
-    cleanOrphanedSessionFolders, // Nueva función
+    cleanOrphanedSessionFolders,
     getSession,
     getAllSessions,
     activeSessions

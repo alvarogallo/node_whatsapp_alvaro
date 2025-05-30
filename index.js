@@ -64,7 +64,7 @@ app.use('/api', apiRoutes);         // /api/*
 // ===== RECUPERACIÓN AUTOMÁTICA DE SESIONES =====
 async function startupRecovery() {
     try {
-        console.log('\n🔄 INICIANDO RECUPERACIÓN DE SESIONES...');
+        console.log('\n🔄 INICIANDO RECUPERACIÓN INTELIGENTE DE SESIONES...');
         const { recoverAllSessions, getSessionsStats } = require('./services/sessionRecovery');
         
         // Mostrar estadísticas antes de recuperar
@@ -73,37 +73,53 @@ async function startupRecovery() {
         console.log(`   📁 Total en carpeta: ${statsBefore.total}`);
         console.log(`   ✅ Válidas: ${statsBefore.valid}`);
         console.log(`   ❌ Inválidas: ${statsBefore.invalid}`);
-        console.log(`   🟢 Activas: ${statsBefore.active}`);
+        console.log(`   🟢 Ya activas: ${statsBefore.active}`);
+        console.log(`   🔄 Necesitan recuperación: ${statsBefore.needRecovery}`);
         
-        if (statsBefore.valid > 0) {
-            console.log(`\n🚀 Recuperando ${statsBefore.valid} sesión(es)...`);
+        // ✅ CLAVE: Solo proceder si hay sesiones que realmente necesitan recuperación
+        if (statsBefore.needRecovery > 0) {
+            console.log(`\n🚀 Recuperando ${statsBefore.needRecovery} sesión(es) que lo necesitan...`);
             
-            // Mostrar progreso
             const startTime = Date.now();
             const results = await recoverAllSessions();
             const endTime = Date.now();
             
             console.log(`\n📋 RESULTADOS DE RECUPERACIÓN:`);
             console.log(`   ⏱️  Tiempo total: ${((endTime - startTime) / 1000).toFixed(1)}s`);
-            console.log(`   ✅ Recuperadas: ${results.recovered}/${results.total}`);
+            console.log(`   ✅ Recuperadas: ${results.recovered}`);
+            console.log(`   ⏭️  Saltadas (ya activas): ${results.skipped}`);
             console.log(`   ❌ Fallidas: ${results.failed}`);
             
             if (results.sessions.length > 0) {
                 console.log(`\n📄 DETALLE DE SESIONES:`);
                 results.sessions.forEach(session => {
-                    if (session.status === 'recovered') {
-                        console.log(`   ✅ ${session.sessionId} - Estado: ${session.session.status}`);
-                    } else {
-                        console.log(`   ❌ ${session.sessionId} - Error: ${session.reason}`);
+                    switch (session.status) {
+                        case 'recovered':
+                            console.log(`   ✅ ${session.sessionId} - Recuperada - Estado: ${session.session.status}`);
+                            break;
+                        case 'skipped':
+                            console.log(`   ⏭️  ${session.sessionId} - Saltada (ya activa)`);
+                            break;
+                        case 'failed':
+                            console.log(`   ❌ ${session.sessionId} - Error: ${session.reason}`);
+                            break;
                     }
                 });
             }
             
+        } else if (statsBefore.active > 0) {
+            console.log(`✅ Todas las ${statsBefore.active} sesión(es) válida(s) ya están activas - No se requiere recuperación`);
         } else {
-            console.log('📝 No hay sesiones válidas para recuperar');
+            console.log('📝 No hay sesiones para recuperar');
         }
         
-        console.log('✅ Recuperación de sesiones completada\n');
+        // Mostrar estadísticas finales
+        const statsAfter = getSessionsStats();
+        console.log(`\n📊 Estado final:`);
+        console.log(`   🟢 Sesiones activas: ${statsAfter.active}`);
+        console.log(`   📁 Total en disco: ${statsAfter.total}`);
+        
+        console.log('✅ Proceso de recuperación completado de forma segura\n');
         
     } catch (error) {
         console.error('❌ Error durante recuperación de sesiones:', error);
