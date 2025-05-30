@@ -201,18 +201,7 @@ async function sendMessage(sessionId, number, message) {
     return true;
 }
 
-// async function destroySession(sessionId) {
-//     const session = activeSessions.get(sessionId);
-    
-//     if (!session) {
-//         throw new Error('Sesión no encontrada');
-//     }
 
-//     await session.client.destroy();
-//     activeSessions.delete(sessionId);
-    
-//     return true;
-// }
 
 function getSession(sessionId) {
     return activeSessions.get(sessionId);
@@ -236,6 +225,9 @@ function getAllSessions() {
 
 // Agregar al final de services/whatsapp.js - Mejorar cierre de sesiones
 
+const fs = require('fs');
+const path = require('path');
+
 async function destroySession(sessionId) {
     const session = activeSessions.get(sessionId);
     
@@ -244,7 +236,7 @@ async function destroySession(sessionId) {
     }
 
     try {
-        console.log(`[${sessionId}] 🔄 Iniciando cierre de sesión...`);
+        console.log(`[${sessionId}] 🔄 Iniciando cierre completo de sesión...`);
         
         // Cerrar cliente con timeout
         const closePromise = session.client.destroy();
@@ -261,6 +253,29 @@ async function destroySession(sessionId) {
         // Siempre remover de la lista de sesiones activas
         activeSessions.delete(sessionId);
         console.log(`[${sessionId}] 🗑️  Sesión removida de memoria`);
+    }
+    
+    // Eliminar carpeta de sesión del disco
+    try {
+        const sessionPath = path.join('./sessions', sessionId);
+        
+        if (fs.existsSync(sessionPath)) {
+            console.log(`[${sessionId}] 📁 Eliminando carpeta de sesión: ${sessionPath}`);
+            
+            // Eliminar recursivamente toda la carpeta
+            fs.rmSync(sessionPath, { 
+                recursive: true, 
+                force: true 
+            });
+            
+            console.log(`[${sessionId}] ✅ Carpeta de sesión eliminada completamente`);
+        } else {
+            console.log(`[${sessionId}] 📝 No hay carpeta de sesión que eliminar`);
+        }
+        
+    } catch (error) {
+        console.error(`[${sessionId}] ❌ Error eliminando carpeta de sesión:`, error.message);
+        // No lanzar error aquí, la sesión ya fue cerrada exitosamente
     }
     
     return true;
@@ -281,13 +296,59 @@ async function destroyAllSessions() {
     console.log('[WHATSAPP] ✅ Todas las sesiones procesadas');
 }
 
-// Exportar la nueva función
+// Función para limpiar carpetas huérfanas (carpetas sin sesión activa)
+function cleanOrphanedSessionFolders() {
+    try {
+        const sessionsPath = './sessions';
+        
+        if (!fs.existsSync(sessionsPath)) {
+            console.log('[WHATSAPP] 📁 Carpeta sessions no existe');
+            return 0;
+        }
+        
+        const folders = fs.readdirSync(sessionsPath, { withFileTypes: true })
+            .filter(dirent => dirent.isDirectory())
+            .map(dirent => dirent.name);
+        
+        let cleaned = 0;
+        
+        folders.forEach(folderName => {
+            // Si la carpeta no tiene una sesión activa, es huérfana
+            if (!activeSessions.has(folderName)) {
+                try {
+                    const folderPath = path.join(sessionsPath, folderName);
+                    fs.rmSync(folderPath, { recursive: true, force: true });
+                    console.log(`[WHATSAPP] 🗑️  Eliminada carpeta huérfana: ${folderName}`);
+                    cleaned++;
+                } catch (error) {
+                    console.error(`[WHATSAPP] ❌ Error eliminando carpeta huérfana ${folderName}:`, error.message);
+                }
+            }
+        });
+        
+        if (cleaned > 0) {
+            console.log(`[WHATSAPP] 🧹 Limpieza completada: ${cleaned} carpeta(s) huérfana(s) eliminada(s)`);
+        }
+        
+        return cleaned;
+        
+    } catch (error) {
+        console.error('[WHATSAPP] ❌ Error limpiando carpetas huérfanas:', error.message);
+        return 0;
+    }
+}
+
+// Exportar las nuevas funciones
 module.exports = {
     createSession,
     sendMessage,
     destroySession,
-    destroyAllSessions, // Nueva función
+    destroyAllSessions, 
+    cleanOrphanedSessionFolders, // Nueva función
     getSession,
     getAllSessions,
     activeSessions
 };
+
+
+

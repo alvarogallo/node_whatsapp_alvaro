@@ -1,3 +1,4 @@
+// index.js - Servidor completo con optimizaciones de memoria
 // Cargar variables de entorno al inicio
 require('dotenv').config();
 
@@ -46,6 +47,10 @@ if (!fs.existsSync('./public')) {
     fs.mkdirSync('./public', { recursive: true });
 }
 
+if (!fs.existsSync('./utils')) {
+    fs.mkdirSync('./utils', { recursive: true });
+}
+
 // ===== IMPORTAR RUTAS =====
 const authRoutes = require('./routes/auth');
 const dashboardRoutes = require('./routes/dashboard');
@@ -55,64 +60,6 @@ const apiRoutes = require('./routes/api');
 app.use('/', authRoutes);           // /, /login, /logout
 app.use('/dashboard', dashboardRoutes);  // /dashboard/*
 app.use('/api', apiRoutes);         // /api/*
-
-// ===== SERVIDOR =====
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => {
-    const memoryUsage = process.memoryUsage();
-    const formatBytes = (bytes) => (bytes / 1024 / 1024).toFixed(2);
-    
-    console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-    console.log(`🌍 Accesible desde cualquier IP en puerto ${PORT}`);
-    console.log('\n=== CONFIGURACIÓN ===');
-    console.log(`📧 Admin Email: ${process.env.ADMIN_EMAIL || 'alvarogallo@hotmail.com'}`);
-    console.log(`🔐 Variables de entorno cargadas: ${process.env.NODE_ENV || 'development'}`);
-    console.log('\n=== MEMORIA INICIAL ===');
-    console.log(`💾 RAM Total: ${formatBytes(memoryUsage.rss)} MB`);
-    console.log(`🧠 Heap Usado: ${formatBytes(memoryUsage.heapUsed)} MB`);
-    console.log(`📊 Heap Total: ${formatBytes(memoryUsage.heapTotal)} MB`);
-    console.log('\n=== RUTAS DISPONIBLES ===');
-    console.log('🔐 AUTENTICACIÓN:');
-    console.log('   GET  /                    - Página principal');
-    console.log('   POST /login              - Procesar login');
-    console.log('   GET  /logout             - Cerrar sesión');
-    console.log('');
-    console.log('🛡️  PROTEGIDAS (requieren login):');
-    console.log('   GET  /dashboard          - Panel de control');
-    console.log('   POST /dashboard/create-session');
-    console.log('   GET  /dashboard/session/:id');
-    console.log('   POST /dashboard/session/:id/send');
-    console.log('   DELETE /dashboard/session/:id');
-    console.log('');
-    console.log('🌍 PÚBLICAS (API sin login):');
-    console.log('   GET  /api/cliente           - Cliente WhatsApp HTML');
-    console.log('   GET  /api/qr/:sessionId     - Obtener token QR');
-    console.log('   GET  /api/status/:sessionId - Estado de sesión');
-    console.log('   DELETE /api/session/:sessionId - Borrar sesión');
-    console.log('   GET  /api/system-info        - Info del sistema');
-    console.log('');
-    console.log('📱 Ejemplos:');
-    console.log('   http://localhost:3000/api/cliente');
-    console.log('   http://localhost:3000/api/qr/ses_1234567');
-    
-    // En la sección de rutas públicas, agregar:
-    console.log('   GET  /api/lottery-info       - Información clave del día');
-    console.log('   POST /api/lottery-refresh    - Refrescar caché lotería');
-    console.log('   POST /api/session            - Crear sesión (requiere clave del día)');
-
-    // Mostrar información de memoria cada 5 minutos
-    setInterval(() => {
-        const mem = process.memoryUsage();
-        console.log(`\n💾 [${new Date().toLocaleString()}] Memoria: RAM=${formatBytes(mem.rss)}MB, Heap=${formatBytes(mem.heapUsed)}MB`);
-    }, 5 * 60 * 1000);
-});
-
-// Agregar al final de index.js - Sistema de cierre correcto
-
-// ===== MANEJO DE CIERRE CORRECTO =====
-let isShuttingDown = false;
-
-// Agregar al final de index.js, antes del gracefulShutdown
 
 // ===== RECUPERACIÓN AUTOMÁTICA DE SESIONES =====
 async function startupRecovery() {
@@ -163,7 +110,40 @@ async function startupRecovery() {
     }
 }
 
-// Llamar a la recuperación después de que el servidor esté listo
+// ===== OPTIMIZACIÓN DE MEMORIA =====
+async function setupMemoryOptimization() {
+    try {
+        console.log('\n🧠 CONFIGURANDO OPTIMIZACIÓN DE MEMORIA...');
+        const memoryOptimizer = require('./services/memoryOptimization');
+        
+        // Mostrar configuración inicial
+        const initialMemory = memoryOptimizer.getMemoryUsage();
+        console.log(`💾 Memoria inicial: ${initialMemory.rss}MB RAM, ${initialMemory.heapUsed}MB Heap`);
+        
+        // Mostrar límites configurados
+        console.log(`⚙️  Límites configurados:`);
+        console.log(`   📱 Máx sesiones: ${memoryOptimizer.MEMORY_LIMITS.MAX_TOTAL_SESSIONS}`);
+        console.log(`   💬 Máx mensajes/sesión: ${memoryOptimizer.MEMORY_LIMITS.MAX_MESSAGES_PER_SESSION}`);
+        console.log(`   ⚠️  Advertencia memoria: ${memoryOptimizer.MEMORY_LIMITS.MEMORY_WARNING_MB}MB`);
+        console.log(`   🚨 Crítico memoria: ${memoryOptimizer.MEMORY_LIMITS.MEMORY_CRITICAL_MB}MB`);
+        console.log(`   ⏰ Timeout sesión: ${memoryOptimizer.MEMORY_LIMITS.SESSION_TIMEOUT_HOURS}h`);
+        
+        // Iniciar limpieza automática
+        memoryOptimizer.startAutomaticCleanup();
+        
+        // Verificación inicial
+        const initialCheck = await memoryOptimizer.checkMemoryLimits();
+        console.log(`📊 Estado inicial: ${initialCheck.status}`);
+        
+        console.log('✅ Optimización de memoria configurada\n');
+        
+    } catch (error) {
+        console.error('❌ Error configurando optimización de memoria:', error);
+    }
+}
+
+// ===== SERVIDOR =====
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', async () => {
     const memoryUsage = process.memoryUsage();
     const formatBytes = (bytes) => (bytes / 1024 / 1024).toFixed(2);
@@ -178,7 +158,10 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🧠 Heap Usado: ${formatBytes(memoryUsage.heapUsed)} MB`);
     console.log(`📊 Heap Total: ${formatBytes(memoryUsage.heapTotal)} MB`);
     
-    // ⭐ NUEVA SECCIÓN: Recuperación de sesiones
+    // ⭐ NUEVA SECCIÓN: Configurar optimización de memoria
+    await setupMemoryOptimization();
+    
+    // ⭐ SECCIÓN EXISTENTE: Recuperación de sesiones
     await startupRecovery();
     
     console.log('\n=== RUTAS DISPONIBLES ===');
@@ -199,87 +182,64 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.log('   GET  /api/lottery-info      - Información clave del día');
     console.log('   POST /api/lottery-refresh   - Refrescar caché lotería');
     console.log('   POST /api/session           - Crear sesión (requiere clave_hoy)');
+    console.log('   POST /api/session/:sessionId - Crear sesión con ID específico');
     console.log('   GET  /api/qr/:sessionId     - Obtener token QR');
     console.log('   GET  /api/status/:sessionId - Estado de sesión');
     console.log('   DELETE /api/session/:sessionId - Borrar sesión');
     console.log('   GET  /api/system-info       - Info del sistema');
-    console.log('   GET  /api/sessions-stats    - Estadísticas de sesiones'); // Nueva ruta
-    console.log('   POST /api/recover-sessions  - Recuperar sesiones manualmente'); // Nueva ruta
+    console.log('   GET  /api/sessions-stats    - Estadísticas de sesiones');
+    console.log('   POST /api/recover-sessions  - Recuperar sesiones manualmente');
+    console.log('   POST /api/recover-session/:sessionId - Recuperar sesión específica');
+    console.log('   POST /api/clean-invalid-sessions - Limpiar sesiones inválidas');
+    console.log('   POST /api/clean-orphaned-folders - Limpiar carpetas huérfanas');
+    console.log('');
+    console.log('📱 GRUPOS Y MENSAJES:');
+    console.log('   POST /api/session/:sessionId/groups - Obtener grupos');
+    console.log('   POST /api/groups            - Obtener grupos (sessionId en body)');
+    console.log('   POST /api/session/:sessionId/send-group-message - Enviar a grupo');
+    console.log('   POST /api/send-group-message - Enviar a grupo (sessionId en body)');
+    console.log('');
+    console.log('🧠 OPTIMIZACIÓN DE MEMORIA:');
+    console.log('   GET  /api/memory-stats      - Estadísticas de memoria');
+    console.log('   POST /api/memory-cleanup    - Forzar limpieza de memoria');
+    console.log('   POST /api/close-inactive-sessions - Cerrar sesiones inactivas');
+    console.log('   POST /api/memory-limits     - Configurar límites de memoria');
+    console.log('');
+    console.log('ℹ️  AYUDA:');
+    console.log('   GET  /api/client-help       - Guía para manejo de clientes');
     console.log('');
     console.log('📱 Ejemplos:');
     console.log('   http://localhost:3000/api/cliente');
-    console.log('   http://localhost:3000/api/qr/ses_1234567');
+    console.log('   http://localhost:3000/api/lottery-info');
+    console.log('   http://localhost:3000/api/memory-stats');
+    console.log('   http://localhost:3000/api/client-help');
     
     // Mostrar información de memoria cada 5 minutos
     setInterval(() => {
-        const mem = process.memoryUsage();
-        console.log(`\n💾 [${new Date().toLocaleString()}] Memoria: RAM=${formatBytes(mem.rss)}MB, Heap=${formatBytes(mem.heapUsed)}MB`);
-    }, 5 * 60 * 1000);
-});
-
-async function gracefulShutdown(signal) {
-    if (isShuttingDown) {
-        console.log(`\n⚠️  Forzando cierre... (ya en proceso de cierre)`);
-        process.exit(1);
-    }
-    
-    isShuttingDown = true;
-    console.log(`\n📴 Recibida señal ${signal}. Iniciando cierre correcto...`);
-    
-    try {
-        // Cerrar todas las sesiones de WhatsApp activas
-        const { getAllSessions, destroySession } = require('./services/whatsapp');
-        const sessions = getAllSessions();
-        
-        if (sessions.length > 0) {
-            console.log(`🔄 Cerrando ${sessions.length} sesión(es) activa(s)...`);
+        try {
+            const memoryOptimizer = require('./services/memoryOptimization');
+            const currentMemory = memoryOptimizer.getMemoryUsage();
+            const sessionCount = require('./services/whatsapp').activeSessions.size;
             
-            const closePromises = sessions.map(async (session) => {
-                try {
-                    console.log(`  📴 Cerrando sesión: ${session.sessionId}`);
-                    await destroySession(session.sessionId);
-                    console.log(`  ✅ Sesión ${session.sessionId} cerrada correctamente`);
-                } catch (error) {
-                    console.error(`  ❌ Error cerrando sesión ${session.sessionId}:`, error.message);
-                }
-            });
+            console.log(`\n💾 [${new Date().toLocaleString()}] RAM: ${currentMemory.rss}MB | Heap: ${currentMemory.heapUsed}MB | Sesiones: ${sessionCount}`);
             
-            // Esperar máximo 10 segundos para cerrar todas las sesiones
-            await Promise.race([
-                Promise.all(closePromises),
-                new Promise(resolve => setTimeout(resolve, 10000))
-            ]);
+            // Alerta si la memoria está alta
+            if (currentMemory.rss >= memoryOptimizer.MEMORY_LIMITS.MEMORY_WARNING_MB) {
+                console.warn(`⚠️  ADVERTENCIA: Memoria alta (${currentMemory.rss}MB >= ${memoryOptimizer.MEMORY_LIMITS.MEMORY_WARNING_MB}MB)`);
+            }
+            
+        } catch (error) {
+            console.error('❌ Error en monitoreo de memoria:', error);
         }
-        
-        console.log('✅ Todas las sesiones cerradas correctamente');
-        
-    } catch (error) {
-        console.error('❌ Error durante el cierre:', error.message);
-    }
+    }, 5 * 60 * 1000);
     
-    console.log('👋 Servidor cerrado correctamente. ¡Hasta luego!');
-    process.exit(0);
-}
-
-// Manejar Ctrl+C (SIGINT)
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
-
-// Manejar terminación del proceso (SIGTERM)
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-
-// Manejar errores no capturados
-process.on('uncaughtException', (error) => {
-    console.error('💥 Error no capturado:', error);
-    gracefulShutdown('UNCAUGHT_EXCEPTION');
+    // Configurar cierre correcto
+    const { setupGracefulShutdown } = require('./utils/gracefulShutdown');
+    setupGracefulShutdown();
+    
+    console.log('\n💡 CONTROLES:');
+    console.log('   Presiona Ctrl+C para cerrar el servidor correctamente');
+    console.log('   El sistema cerrará todas las sesiones de WhatsApp automáticamente');
+    console.log('   ⚠️  Si no responde, presiona Ctrl+C nuevamente para forzar cierre');
+    console.log('\n🎯 SERVIDOR LISTO Y OPTIMIZADO!\n');
 });
-
-process.on('unhandledRejection', (reason, promise) => {
-    console.error('💥 Promesa rechazada no manejada:', reason);
-    gracefulShutdown('UNHANDLED_REJECTION');
-});
-
-// Mostrar mensaje de ayuda
-console.log('\n💡 AYUDA:');
-console.log('   Presiona Ctrl+C para cerrar el servidor correctamente');
-console.log('   El sistema cerrará todas las sesiones de WhatsApp automáticamente');
-console.log('');

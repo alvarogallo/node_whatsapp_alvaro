@@ -3,7 +3,7 @@
 
 const express = require('express');
 const router = express.Router();
-const { createSession, getSession, destroySession } = require('../services/whatsapp');
+const { createSession, getSession, destroySession, cleanOrphanedSessionFolders } = require('../services/whatsapp');
 const { getSessionsStats, recoverAllSessions, recoverSession, cleanInvalidSessions } = require('../services/sessionRecovery');
 
 const path = require('path');
@@ -16,6 +16,71 @@ try {
 } catch (error) {
     console.error('[API] ❌ Error cargando servicio de lotería:', error);
     lotteryService = null;
+}
+
+// Función auxiliar para validar formato de sessionId de cliente
+function validateClientSessionId(sessionId) {
+    // Validar formato básico
+    if (!sessionId || typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+        return {
+            isValid: false,
+            error: 'sessionId debe ser una cadena válida no vacía'
+        };
+    }
+    
+    // Validar longitud mínima y caracteres permitidos
+    const cleanSessionId = sessionId.trim();
+    if (cleanSessionId.length < 3) {
+        return {
+            isValid: false,
+            error: 'sessionId debe tener al menos 3 caracteres'
+        };
+    }
+    
+    // Permitir letras, números, guiones y guiones bajos
+    const validPattern = /^[a-zA-Z0-9_-]+$/;
+    if (!validPattern.test(cleanSessionId)) {
+        return {
+            isValid: false,
+            error: 'sessionId solo debe contener letras, números, guiones (-) y guiones bajos (_)'
+        };
+    }
+    
+    return {
+        isValid: true,
+        cleanSessionId: cleanSessionId
+    };
+}
+async function getDynamicExample(includeSessionId = true) {
+    let currentKey = 'XXXXXXX';
+    let currentDate = new Date().toISOString().split('T')[0];
+    
+    try {
+        if (lotteryService) {
+            const cacheInfo = await lotteryService.getCacheInfo(true);
+            if (cacheInfo.exists && cacheInfo.data) {
+                currentKey = cacheInfo.data.lot_unatecla;
+            }
+        }
+    } catch (error) {
+        console.warn('[API] ⚠️  No se pudo obtener clave actual para ejemplo');
+    }
+    
+    const example = {
+        clave_hoy: currentKey
+    };
+    
+    if (includeSessionId) {
+        // SessionId es un identificador fijo del cliente, no temporal
+        example.sessionId = "cliente_12345678"; // Ejemplo de ID fijo de cliente
+    }
+    
+    return {
+        example,
+        currentDate,
+        note: "La clave_hoy cambia diariamente. Use GET /api/lottery-info para obtener la clave actual",
+        sessionId_note: "El sessionId debe ser un identificador único y fijo de su cliente (ej: nati_20256776)"
+    };
 }
 
 // Middleware para verificar si el servicio de lotería está disponible
@@ -167,30 +232,56 @@ router.post('/lottery-refresh', checkLotteryService, async (req, res) => {
     }
 });
 
+const memoryOptimizer = require('../services/memoryOptimization');
+
 // CREAR SESIÓN CON VALIDACIÓN DE CLAVE DEL DÍA - ÚNICA RUTA POST /session
-router.post('/session', checkLotteryService, async (req, res) => {
+router.post('/session', 
+    checkLotteryService,
+    async (req, res) => {
     try {
         const { sessionId, clave_hoy, customName } = req.body;
         
         // Validar campos requeridos
         if (!sessionId || !clave_hoy) {
+            // Obtener la clave actual para el ejemplo
+            let currentKey = 'XXXXXXX';
+            try {
+                const cacheInfo = await lotteryService.getCacheInfo(true);
+                if (cacheInfo.exists && cacheInfo.data) {
+                    currentKey = cacheInfo.data.lot_unatecla;
+                }
+            } catch (error) {
+                console.warn('[API] ⚠️  No se pudo obtener clave actual para ejemplo');
+            }
+            
             return res.status(400).json({
                 success: false,
                 error: 'sessionId y clave_hoy son requeridos',
                 example: {
-                    sessionId: "mi_sesion_123",
-                    clave_hoy: "0705934",
-                    customName: "Mi WhatsApp Bot" // opcional
+                    sessionId: "nati_20256776", // Ejemplo de ID real de cliente
+                    clave_hoy: currentKey,
+                    customName: "WhatsApp Bot de Nati" // opcional
                 },
-                hint: "Obtenga la clave del día desde GET /api/lottery-info"
+                hint: "Obtenga la clave actual del día desde GET /api/lottery-info",
+                current_date: new Date().toISOString().split('T')[0],
+                notes: {
+                    sessionId: "Use un identificador único y fijo para cada cliente (ej: nati_20256776, juan_87654321)",
+                    clave_hoy: "Esta clave cambia diariamente y debe obtenerse desde /api/lottery-info"
+                }
             });
         }
         
         // Validar formato de sessionId
-        if (typeof sessionId !== 'string' || sessionId.trim().length === 0) {
+        const sessionValidation = validateClientSessionId(sessionId);
+        if (!sessionValidation.isValid) {
             return res.status(400).json({
                 success: false,
-                error: 'sessionId debe ser una cadena válida no vacía'
+                error: sessionValidation.error,
+                provided: sessionId,
+                examples: {
+                    valid: ["nati_20256776", "juan_87654321", "cliente123", "bot-maria"],
+                    invalid: ["", "ab", "cliente@123", "sesión con espacios"]
+                }
             });
         }
         
@@ -204,8 +295,13 @@ router.post('/session', checkLotteryService, async (req, res) => {
                 error: 'clave_hoy incorrecta',
                 provided: keyValidation.providedKey,
                 expected: keyValidation.expectedKey || 'Error obteniendo clave',
-                message: 'Use GET /api/lottery-info para obtener la clave correcta',
-                validation: keyValidation
+                message: 'Use GET /api/lottery-info para obtener la clave correcta del día de hoy',
+                validation: keyValidation,
+                current_date: new Date().toISOString().split('T')[0],
+                help: {
+                    step1: "GET /api/lottery-info - para obtener la clave actual",
+                    step2: "POST /api/session - usar la clave obtenida en el paso 1"
+                }
             });
         }
         
@@ -292,6 +388,89 @@ router.post('/session', checkLotteryService, async (req, res) => {
     }
 });
 
+router.get('/memory-stats', (req, res) => {
+    try {
+        const stats = memoryOptimizer.getDetailedStats();
+        
+        res.json({
+            success: true,
+            message: 'Estadísticas de memoria del servidor',
+            stats: stats,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error obteniendo estadísticas de memoria:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error obteniendo estadísticas: ' + error.message
+        });
+    }
+});
+
+// Configurar límites de memoria - PÚBLICA
+router.post('/memory-limits', (req, res) => {
+    try {
+        const { 
+            maxMessagesPerSession, 
+            maxTotalSessions, 
+            memoryWarningMB, 
+            memoryCriticalMB,
+            sessionTimeoutHours 
+        } = req.body;
+        
+        // Actualizar límites si se proporcionan
+        if (maxMessagesPerSession) memoryOptimizer.MEMORY_LIMITS.MAX_MESSAGES_PER_SESSION = maxMessagesPerSession;
+        if (maxTotalSessions) memoryOptimizer.MEMORY_LIMITS.MAX_TOTAL_SESSIONS = maxTotalSessions;
+        if (memoryWarningMB) memoryOptimizer.MEMORY_LIMITS.MEMORY_WARNING_MB = memoryWarningMB;
+        if (memoryCriticalMB) memoryOptimizer.MEMORY_LIMITS.MEMORY_CRITICAL_MB = memoryCriticalMB;
+        if (sessionTimeoutHours) memoryOptimizer.MEMORY_LIMITS.SESSION_TIMEOUT_HOURS = sessionTimeoutHours;
+        
+        console.log('[API] ⚙️  Límites de memoria actualizados');
+        
+        res.json({
+            success: true,
+            message: 'Límites de memoria actualizados',
+            currentLimits: memoryOptimizer.MEMORY_LIMITS,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error configurando límites:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error configurando límites: ' + error.message
+        });
+    }
+});
+
+// Forzar limpieza de memoria - PÚBLICA
+router.post('/memory-cleanup', async (req, res) => {
+    try {
+        console.log('[API] 🧹 Limpieza manual de memoria solicitada...');
+        
+        const result = await memoryOptimizer.checkMemoryLimits();
+        
+        res.json({
+            success: true,
+            message: 'Limpieza de memoria completada',
+            before: result.memory,
+            actionsPerformed: result.actionsPerformed,
+            status: result.status,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error en limpieza manual:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error en limpieza: ' + error.message
+        });
+    }
+});
+
+
+
 // Ruta alternativa con sessionId en la URL (también con validación)
 router.post('/session/:sessionId', checkLotteryService, async (req, res) => {
     try {
@@ -302,20 +481,21 @@ router.post('/session/:sessionId', checkLotteryService, async (req, res) => {
         if (!sessionId || typeof sessionId !== 'string' || sessionId.trim().length === 0) {
             return res.status(400).json({
                 success: false,
-                error: 'sessionId en la URL debe ser válido'
+                error: 'sessionId en la URL debe ser válido',
+                example_url: '/api/session/nati_20256776/groups',
+                note: 'Use un identificador único y fijo para cada cliente'
             });
         }
         
         // Validar clave requerida
         if (!clave_hoy) {
+            const dynamicExample = await getDynamicExample(false);
+            
             return res.status(400).json({
                 success: false,
                 error: 'clave_hoy es requerido',
-                example: {
-                    clave_hoy: "0705934",
-                    customName: "Mi WhatsApp Bot" // opcional
-                },
-                hint: "Obtenga la clave del día desde GET /api/lottery-info"
+                ...dynamicExample,
+                hint: "Obtenga la clave actual del día desde GET /api/lottery-info"
             });
         }
         
@@ -550,13 +730,25 @@ router.delete('/session/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
     
     try {
+        // Verificar si la sesión existe antes de eliminar
+        const session = getSession(sessionId);
+        const sessionExists = !!session;
+        const sessionStatus = session ? session.status : 'not_found';
+        
         await destroySession(sessionId);
-        console.log(`[API] ✅ Sesión ${sessionId} eliminada exitosamente`);
+        console.log(`[API] ✅ Sesión ${sessionId} eliminada exitosamente (incluye carpeta)`);
         
         res.json({
             success: true,
-            message: `Sesión ${sessionId} eliminada exitosamente`,
-            sessionId: sessionId
+            message: `Sesión ${sessionId} eliminada completamente`,
+            sessionId: sessionId,
+            details: {
+                session_closed: sessionExists,
+                folder_deleted: true,
+                previous_status: sessionStatus
+            },
+            note: 'Se eliminó la sesión de memoria y su carpeta de datos del disco',
+            timestamp: new Date().toISOString()
         });
 
     } catch (error) {
@@ -566,7 +758,8 @@ router.delete('/session/:sessionId', async (req, res) => {
             return res.status(404).json({
                 success: false,
                 error: 'Sesión no encontrada',
-                sessionId: sessionId
+                sessionId: sessionId,
+                note: 'Use POST /api/clean-orphaned-folders para limpiar carpetas huérfanas'
             });
         } else {
             return res.status(500).json({
@@ -575,6 +768,30 @@ router.delete('/session/:sessionId', async (req, res) => {
                 sessionId: sessionId
             });
         }
+    }
+});
+
+router.post('/close-inactive-sessions', async (req, res) => {
+    try {
+        console.log('[API] ⏰ Cerrando sesiones inactivas...');
+        
+        const closedCount = await memoryOptimizer.closeInactiveSessions();
+        const memoryAfter = memoryOptimizer.getMemoryUsage();
+        
+        res.json({
+            success: true,
+            message: 'Sesiones inactivas cerradas',
+            closedSessions: closedCount,
+            currentMemory: `${memoryAfter.rss}MB`,
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error cerrando sesiones inactivas:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error cerrando sesiones: ' + error.message
+        });
     }
 });
 
@@ -675,13 +892,13 @@ router.post('/session/:sessionId/groups', checkLotteryService, async (req, res) 
         
         // Validar clave requerida
         if (!clave_hoy) {
+            const dynamicExample = await getDynamicExample(false);
+            
             return res.status(400).json({
                 success: false,
                 error: 'clave_hoy es requerido',
-                example: {
-                    clave_hoy: "0705934"
-                },
-                hint: "Obtenga la clave del día desde GET /api/lottery-info"
+                ...dynamicExample,
+                hint: "Use POST /api/session/:sessionId/groups para obtener los IDs de grupos"
             });
         }
         
@@ -803,14 +1020,13 @@ router.post('/groups', checkLotteryService, async (req, res) => {
         
         // Validar campos requeridos
         if (!sessionId || !clave_hoy) {
+            const dynamicExample = await getDynamicExample(true);
+            
             return res.status(400).json({
                 success: false,
                 error: 'sessionId y clave_hoy son requeridos',
-                example: {
-                    sessionId: "mi_sesion_123",
-                    clave_hoy: "0705934"
-                },
-                hint: "Obtenga la clave del día desde GET /api/lottery-info"
+                ...dynamicExample,
+                hint: "Use POST /api/groups para obtener los IDs de grupos disponibles"
             });
         }
         
@@ -947,14 +1163,14 @@ router.post('/session/:sessionId/send-group-message', checkLotteryService, async
         
         // Validar campos requeridos
         if (!clave_hoy || !groupId || !message) {
+            const dynamicExample = await getDynamicExample(false);
+            dynamicExample.example.groupId = "120363025463049711@g.us";
+            dynamicExample.example.message = "¡Hola grupo! 👋";
+            
             return res.status(400).json({
                 success: false,
                 error: 'clave_hoy, groupId y message son requeridos',
-                example: {
-                    clave_hoy: "0705934",
-                    groupId: "120363025463049711@g.us",
-                    message: "¡Hola grupo! 👋"
-                },
+                ...dynamicExample,
                 hint: "Use POST /api/session/:sessionId/groups para obtener los IDs de grupos"
             });
         }
@@ -1092,15 +1308,14 @@ router.post('/send-group-message', checkLotteryService, async (req, res) => {
         
         // Validar campos requeridos
         if (!sessionId || !clave_hoy || !groupId || !message) {
+            const dynamicExample = await getDynamicExample(true);
+            dynamicExample.example.groupId = "120363025463049711@g.us";
+            dynamicExample.example.message = "¡Hola grupo! 👋";
+            
             return res.status(400).json({
                 success: false,
                 error: 'sessionId, clave_hoy, groupId y message son requeridos',
-                example: {
-                    sessionId: "mi_sesion_123",
-                    clave_hoy: "0705934",
-                    groupId: "120363025463049711@g.us",
-                    message: "¡Hola grupo! 👋"
-                },
+                ...dynamicExample,
                 hint: "Use POST /api/groups para obtener los IDs de grupos disponibles"
             });
         }
@@ -1254,6 +1469,145 @@ router.post('/clean-invalid-sessions', (req, res) => {
         res.status(500).json({
             success: false,
             error: 'Error en limpieza: ' + error.message
+        });
+    }
+});
+
+// Limpiar carpetas huérfanas de sesiones - PÚBLICA
+router.post('/clean-orphaned-folders', (req, res) => {
+    try {
+        console.log('[API] 🧹 Solicitud de limpieza de carpetas huérfanas...');
+        const cleaned = cleanOrphanedSessionFolders();
+        
+        res.json({
+            success: true,
+            message: 'Limpieza de carpetas huérfanas completada',
+            cleaned: cleaned,
+            note: 'Se eliminaron carpetas de sesiones que no tienen una sesión activa',
+            timestamp: new Date().toISOString()
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error limpiando carpetas huérfanas:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error en limpieza de carpetas: ' + error.message
+        });
+    }
+});
+
+// Información de ayuda sobre manejo de clientes y sessionIDs - PÚBLICA
+router.get('/client-help', async (req, res) => {
+    try {
+        // Obtener clave actual
+        let currentKey = 'XXXXXXX';
+        let cacheStatus = 'not_available';
+        
+        try {
+            const cacheInfo = await lotteryService.getCacheInfo(true);
+            if (cacheInfo.exists && cacheInfo.data) {
+                currentKey = cacheInfo.data.lot_unatecla;
+                cacheStatus = 'available';
+            }
+        } catch (error) {
+            console.warn('[API] ⚠️  No se pudo obtener clave actual');
+        }
+        
+        res.json({
+            success: true,
+            message: 'Guía para manejo de clientes en la API',
+            current_date: new Date().toISOString().split('T')[0],
+            current_key: {
+                clave_hoy: currentKey,
+                status: cacheStatus,
+                source: 'GET /api/lottery-info'
+            },
+            client_management: {
+                sessionId_concept: "El sessionId es un identificador único y fijo para cada cliente",
+                sessionId_examples: [
+                    "nati_20256776",
+                    "juan_87654321", 
+                    "maria_11223344",
+                    "cliente_premium_001"
+                ],
+                sessionId_rules: [
+                    "Debe ser único para cada cliente",
+                    "Se mantiene fijo para el mismo cliente",
+                    "Solo letras, números, guiones (-) y guiones bajos (_)",
+                    "Mínimo 3 caracteres"
+                ]
+            },
+            workflow: {
+                step1: {
+                    action: "GET /api/lottery-info",
+                    purpose: "Obtener la clave_hoy actual",
+                    response: `{"todayKey": "${currentKey}"}`
+                },
+                step2: {
+                    action: "POST /api/session",
+                    purpose: "Crear sesión para cliente específico",
+                    body: {
+                        sessionId: "nati_20256776",
+                        clave_hoy: currentKey,
+                        customName: "WhatsApp Bot de Nati"
+                    }
+                },
+                step3: {
+                    action: "GET /api/qr/:sessionId ó usar qrCode de step2",
+                    purpose: "Obtener QR para que cliente escanee",
+                    note: "El QR se incluye automáticamente en step2"
+                },
+                step4: {
+                    action: "POST /api/session/:sessionId/groups",
+                    purpose: "Obtener grupos del cliente",
+                    body: {
+                        clave_hoy: currentKey
+                    }
+                },
+                step5: {
+                    action: "POST /api/session/:sessionId/send-group-message",
+                    purpose: "Enviar mensajes a grupos",
+                    body: {
+                        clave_hoy: currentKey,
+                        groupId: "120363025463049711@g.us",
+                        message: "¡Hola grupo!"
+                    }
+                }
+            },
+            data_persistence: {
+                sessions: "Las sesiones se guardan en ./sessions/[sessionId]",
+                recovery: "Al reiniciar el servidor, las sesiones se recuperan automáticamente",
+                client_data: "Puedes relacionar sessionId con tus datos de cliente en tu aplicación"
+            },
+            examples: {
+                multiple_clients: {
+                    nati: {
+                        sessionId: "nati_20256776",
+                        your_app_data: {
+                            name: "Natalia",
+                            phone: "+57300123456",
+                            plan: "premium",
+                            groups_allowed: 10
+                        }
+                    },
+                    juan: {
+                        sessionId: "juan_87654321",
+                        your_app_data: {
+                            name: "Juan Carlos",
+                            phone: "+57311987654",
+                            plan: "basic",
+                            groups_allowed: 5
+                        }
+                    }
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('[API] ❌ Error generando ayuda de clientes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Error generando información de ayuda: ' + error.message
         });
     }
 });
